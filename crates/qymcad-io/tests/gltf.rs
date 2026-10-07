@@ -165,6 +165,23 @@ fn a_broken_file_is_refused_by_name() {
     assert!(export_glb(&[], &file("nothing.glb", None)).is_err(), "an empty set was written as a file");
 }
 
+/// AN ACCESSOR COUNT BEYOND THE BUFFER IS REFUSED WITHOUT ALLOCATING.
+///
+/// A declared count larger than what the buffer holds must be rejected before allocating.
+#[test]
+fn an_accessor_count_beyond_the_buffer_is_refused_without_allocating() {
+    let bin = floats(&[0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0, 0.0]);
+    let bad = serde_json::json!({
+        "asset": {"version": "2.0"}, "nodes": [{"mesh": 0}],
+        "meshes": [{"primitives": [{"attributes": {"POSITION": 0}}]}],
+        "accessors": [{"bufferView": 0, "componentType": 5126, "count": 4_000_000_000u64, "type": "VEC3"}],
+        "bufferViews": [{"buffer": 0, "byteLength": 36}],
+        "buffers": [{"byteLength": 36, "uri": format!("data:application/octet-stream;base64,{}", b64(&bin))}]
+    })
+    .to_string();
+    assert_eq!(import_gltf(&file("huge-count.gltf", Some(bad.as_bytes()))).err().as_deref(), Some("io-gltf-bad-accessor"));
+}
+
 /// A NODE TAKES THE COLOUR OF ITS MATERIAL. glTF writes `baseColorFactor` in linear light: 0.6038 is sRGB 0.800 and
 /// 0.0100 is sRGB 0.0999, a red part, and they come in as the bytes a colour picker shows - 204 and 25.
 #[test]

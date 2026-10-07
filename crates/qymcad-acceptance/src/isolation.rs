@@ -28,11 +28,22 @@ const TIER_BUDGET_VAR: &str = "QYMCAD_TIER_BUDGET_SECS";
 const PROBE_MEMORY_MB: u64 = 2048;
 const PROBE_MEMORY_VAR: &str = "QYMCAD_PROBE_MEMORY_MB";
 
-/// How much memory the process `pid` holds now, in megabytes; `None` where the system does not say (no `/proc`).
+/// How much memory the process `pid` holds now, in megabytes; `None` where the system does not say.
 fn resident_mb(pid: u32) -> Option<u64> {
-    let status = std::fs::read_to_string(format!("/proc/{pid}/status")).ok()?;
-    let kb: u64 = status.lines().find_map(|l| l.strip_prefix("VmRSS:"))?.trim().trim_end_matches("kB").trim().parse().ok()?;
-    Some(kb / 1024)
+    if let Ok(status) = std::fs::read_to_string(format!("/proc/{pid}/status")) {
+        let kb: u64 = status.lines().find_map(|l| l.strip_prefix("VmRSS:"))?.trim().trim_end_matches("kB").trim().parse().ok()?;
+        return Some(kb / 1024);
+    }
+    #[cfg(target_os = "macos")]
+    {
+        let out = std::process::Command::new("ps").args(["-o", "rss=", "-p", &pid.to_string()]).output().ok()?;
+        if out.status.success() {
+            let s = std::str::from_utf8(&out.stdout).ok()?.trim();
+            let kb: u64 = s.parse().ok()?;
+            return Some(kb / 1024);
+        }
+    }
+    None
 }
 
 /// How a check's own process came to an end.

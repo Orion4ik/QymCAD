@@ -980,6 +980,7 @@ impl Project {
         // A RECTANGLE LOSING A SIDE IS BROKEN: its diagonals go with the side, its centre with them, and the constraints
         // it held itself by - four plain lines are left, with nothing of the rectangle on them.
         let mut eids = eids.to_vec();
+        let mut broken_rect_survivors: Vec<Vec<Id>> = Vec::new();
         if let Some(s) = self.sketches.get_mut(si) {
             let broken: Vec<crate::model::SketchRect> = s.rects.iter().filter(|r| r.sides.iter().chain(r.diagonals.iter().flatten()).any(|e| eids.contains(e))).cloned().collect();
             s.rects.retain(|r| !broken.contains(r));
@@ -988,6 +989,10 @@ impl Project {
                 let [c0, c1, c2, c3] = r.corners;
                 let own = rect_own_constraints(c0, c1, c2, c3, r.centre, 0.0);
                 s.constraints.retain(|c| !own.iter().any(|o| same_rect_constraint(o, c)));
+                let surviving: Vec<Id> = r.sides.into_iter().filter(|side| !eids.contains(side)).collect();
+                if !surviving.is_empty() {
+                    broken_rect_survivors.push(surviving);
+                }
             }
         }
         let eids = &eids[..];
@@ -1005,7 +1010,7 @@ impl Project {
                 .collect();
             s.entities.retain(|e| !eids.contains(&e.id));
             // Drop the constraints attached to a deleted line (horizontal, vertical, parallel, perpendicular,
-            // equal, collinear, tangent, midpoint — those referencing its pair of endpoints), or dangling
+            // equal, collinear, tangent, midpoint - those referencing its pair of endpoints), or dangling
             // glyphs remain.
             if !dead_lines.is_empty() {
                 s.constraints.retain(|c| !constraint_uses_line(c, &dead_lines));
@@ -1028,6 +1033,9 @@ impl Project {
             s.points.retain(|p| used.contains(&p.id) || protected.contains(&p.id));
             let alive: std::collections::HashSet<Id> = s.points.iter().map(|p| p.id).collect();
             s.constraints.retain(|c| constraint_point_ids(c).iter().all(|id| alive.contains(id)));
+        }
+        for surviving in broken_rect_survivors {
+            self.constrain_broken_rect_lines(si, &surviving);
         }
         self.regen_sketch(si);
     }
@@ -1080,8 +1088,7 @@ impl Project {
         let s = self.sketches.get(si)?;
         let r = s.rects.iter().find(|r| r.sides.contains(&side))?.clone();
         let [c0, c1, c2, c3] = r.corners;
-        let find =
-            |pairs: [(Id, Id); 2]| s.constraints.iter().position(|c| matches!(*c, Constraint::Distance { a, b, axis: 0, .. } if pairs.iter().any(|&(x, y)| (a == x && b == y) || (a == y && b == x))));
+        let find = |pairs: [(Id, Id); 2]| s.constraints.iter().position(|c| matches!(*c, Constraint::Distance { a, b, .. } if pairs.iter().any(|&(x, y)| (a == x && b == y) || (a == y && b == x))));
         let (width, height) = (find([(c0, c1), (c3, c2)]), find([(c1, c2), (c0, c3)]));
         match (width, height) {
             (Some(width), Some(height)) => Some(crate::model::RectDims { width, height }),
@@ -1108,9 +1115,23 @@ impl Project {
         let (Some(p0), Some(p1), Some(p2)) = (at(r.corners[0]), at(r.corners[1]), at(r.corners[2])) else { return false };
         let (w, h) = ((p1.0 - p0.0).hypot(p1.1 - p0.1), (p2.0 - p1.0).hypot(p2.1 - p1.1));
         let off = 0.2 * w.min(h);
-        let dim = |a: Id, b: Id, d: f64| Constraint::Distance { a, b, d, off, expr: String::new(), driven: false, axis: 0, at: None };
-        s.constraints.push(dim(r.corners[0], r.corners[1], w));
-        s.constraints.push(dim(r.corners[1], r.corners[2], h));
+        let axis0 = if (p1.1 - p0.1).abs() < 1e-6 {
+            1
+        } else if (p1.0 - p0.0).abs() < 1e-6 {
+            2
+        } else {
+            0
+        };
+        let axis1 = if (p2.1 - p1.1).abs() < 1e-6 {
+            1
+        } else if (p2.0 - p1.0).abs() < 1e-6 {
+            2
+        } else {
+            0
+        };
+        let dim = |a: Id, b: Id, d: f64, axis: u8| Constraint::Distance { a, b, d, off, expr: String::new(), driven: false, axis, at: None };
+        s.constraints.push(dim(r.corners[0], r.corners[1], w, axis0));
+        s.constraints.push(dim(r.corners[1], r.corners[2], h, axis1));
         true
     }
     /// AN ANGLE DIMENSION ON A SIDE OF A RECTANGLE TAKES ITS TURN: called with the dimension before it is laid. The turns
@@ -1131,6 +1152,14 @@ impl Project {
             s.constraints.retain(|k| !(matches!(k, Constraint::Orientation { .. }) && is_rect_own(&r, k)));
             let [c0, c1, c2, c3] = r.corners;
             s.constraints.extend(rect_free_constraints(c0, c1, c2, c3));
+            let sides = [(c0, c1), (c1, c2), (c2, c3), (c3, c0)];
+            for k in s.constraints.iter_mut() {
+                if let Constraint::Distance { a, b, axis, .. } = k {
+                    if sides.iter().any(|&(x, y)| (*a == x && *b == y) || (*a == y && *b == x)) {
+                        *axis = 0;
+                    }
+                }
+            }
         }
     }
     /// AFTER A CONSTRAINT IS DELETED, the rectangles it was part of: one of a rectangle's own constraints deleted breaks
@@ -1155,10 +1184,30 @@ impl Project {
         for r in free {
             let at = |id: Id| s.points.iter().find(|q| q.id == id).map(|q| (q.x, q.y));
             let (Some(p0), Some(p1)) = (at(r.corners[0]), at(r.corners[1])) else { continue };
-            let deg = (p1.1 - p0.1).atan2(p1.0 - p0.0).to_degrees();
+            let deg = (p1.1 - p0.1).atan2(p1.0 - p0.0).to_degrees().rem_euclid(180.0);
             let [c0, c1, c2, c3] = r.corners;
             s.constraints.retain(|k| !(matches!(k, Constraint::Parallel { .. } | Constraint::Perpendicular { .. }) && is_rect_own(&r, k)));
             s.constraints.extend(rect_own_constraints(c0, c1, c2, c3, r.centre, deg).into_iter().filter(|k| matches!(k, Constraint::Orientation { .. })));
+            let is_horiz = deg < 1e-4 || (deg - 180.0).abs() < 1e-4;
+            let is_vert = (deg - 90.0).abs() < 1e-4;
+            if is_horiz || is_vert {
+                let sides = [(c0, c1), (c1, c2), (c2, c3), (c3, c0)];
+                for k in s.constraints.iter_mut() {
+                    if let Constraint::Distance { a, b, axis, .. } = k {
+                        if sides.iter().any(|&(x, y)| (*a == x && *b == y) || (*a == y && *b == x)) {
+                            if let (Some(pa), Some(pb)) = (at(*a), at(*b)) {
+                                let (dx, dy) = (pb.0 - pa.0, pb.1 - pa.1);
+                                let d_ang = dy.atan2(dx).to_degrees().rem_euclid(180.0);
+                                if d_ang < 1e-4 || (d_ang - 180.0).abs() < 1e-4 {
+                                    *axis = 1;
+                                } else if (d_ang - 90.0).abs() < 1e-4 {
+                                    *axis = 2;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
         }
         let centres: Vec<Id> = broken.iter().map(|r| r.centre).collect();
         if !diagonals.is_empty() {
@@ -1167,6 +1216,112 @@ impl Project {
         if let Some(s) = self.sketches.get_mut(si) {
             let used: std::collections::HashSet<Id> = s.constraints.iter().flat_map(constraint_point_ids).collect();
             s.points.retain(|q| !centres.contains(&q.id) || used.contains(&q.id));
+        }
+        for r in &broken {
+            let surviving: Vec<Id> = if let Some(s) = self.sketches.get(si) { r.sides.into_iter().filter(|side| s.entities.iter().any(|e| e.id == *side)).collect() } else { Vec::new() };
+            self.constrain_broken_rect_lines(si, &surviving);
+        }
+    }
+    /// When a rectangle is broken with auto-constraints on, the surviving lines get the constraints
+    /// a person drawing them by hand would get: Horizontal or Vertical on a line standing so,
+    /// Parallel and Perpendicular between the lines that are, Equal between lines of one length -
+    /// each added only if independent.
+    pub fn constrain_broken_rect_lines(&mut self, si: usize, lines: &[Id]) {
+        if !self.auto_constrain || lines.is_empty() {
+            return;
+        }
+        let (line_data, pts) = {
+            let Some(s) = self.sketches.get(si) else { return };
+            let mut line_data: Vec<(Id, Id, Id)> = Vec::new();
+            for &eid in lines {
+                if let Some(e) = s.entities.iter().find(|e| e.id == eid) {
+                    if let EntityKind::Line { a, b } = e.kind {
+                        line_data.push((eid, a, b));
+                    }
+                }
+            }
+            let pts: std::collections::HashMap<Id, (f64, f64)> = s.points.iter().map(|q| (q.id, (q.x, q.y))).collect();
+            (line_data, pts)
+        };
+        if line_data.is_empty() {
+            return;
+        }
+
+        let at = |id: Id| pts.get(&id).copied();
+
+        // 1. Horizontal or Vertical for each line standing so
+        for &(_, a, b) in &line_data {
+            if let (Some(pa), Some(pb)) = (at(a), at(b)) {
+                let (dx, dy) = ((pb.0 - pa.0).abs(), (pb.1 - pa.1).abs());
+                let tol = 0.06;
+                if dy <= dx * tol && dx > 1e-6 {
+                    self.add_constraint_if_independent(si, Constraint::Horizontal { a, b });
+                } else if dx <= dy * tol && dy > 1e-6 {
+                    self.add_constraint_if_independent(si, Constraint::Vertical { a, b });
+                }
+            }
+        }
+
+        // 2. Parallel between lines that are parallel
+        let n = line_data.len();
+        for i in 0..n {
+            for j in (i + 1)..n {
+                let (_, a1, b1) = line_data[i];
+                let (_, a2, b2) = line_data[j];
+                if let (Some(p_a1), Some(p_b1), Some(p_a2), Some(p_b2)) = (at(a1), at(b1), at(a2), at(b2)) {
+                    let (u1, v1) = (p_b1.0 - p_a1.0, p_b1.1 - p_a1.1);
+                    let (u2, v2) = (p_b2.0 - p_a2.0, p_b2.1 - p_a2.1);
+                    let l1 = (u1 * u1 + v1 * v1).sqrt();
+                    let l2 = (u2 * u2 + v2 * v2).sqrt();
+                    if l1 > 1e-6 && l2 > 1e-6 {
+                        let cross = (u1 * v2 - v1 * u2).abs() / (l1 * l2);
+                        if cross <= 0.06 {
+                            self.add_constraint_if_independent(si, Constraint::Parallel { a: a1, b: b1, c: a2, d: b2 });
+                        }
+                    }
+                }
+            }
+        }
+
+        // 3. Perpendicular between lines that are perpendicular
+        for i in 0..n {
+            for j in (i + 1)..n {
+                let (_, a1, b1) = line_data[i];
+                let (_, a2, b2) = line_data[j];
+                if let (Some(p_a1), Some(p_b1), Some(p_a2), Some(p_b2)) = (at(a1), at(b1), at(a2), at(b2)) {
+                    let (u1, v1) = (p_b1.0 - p_a1.0, p_b1.1 - p_a1.1);
+                    let (u2, v2) = (p_b2.0 - p_a2.0, p_b2.1 - p_a2.1);
+                    let l1 = (u1 * u1 + v1 * v1).sqrt();
+                    let l2 = (u2 * u2 + v2 * v2).sqrt();
+                    if l1 > 1e-6 && l2 > 1e-6 {
+                        let dot = (u1 * u2 + v1 * v2).abs() / (l1 * l2);
+                        if dot <= 0.06 {
+                            self.add_constraint_if_independent(si, Constraint::Perpendicular { a: a1, b: b1, c: a2, d: b2 });
+                        }
+                    }
+                }
+            }
+        }
+
+        // 4. Equal between adjacent lines of equal length
+        for i in 0..n {
+            for j in (i + 1)..n {
+                let (_, a1, b1) = line_data[i];
+                let (_, a2, b2) = line_data[j];
+                let shares_end = a1 == a2 || a1 == b2 || b1 == a2 || b1 == b2;
+                if shares_end {
+                    if let (Some(p_a1), Some(p_b1), Some(p_a2), Some(p_b2)) = (at(a1), at(b1), at(a2), at(b2)) {
+                        let l1 = ((p_b1.0 - p_a1.0).powi(2) + (p_b1.1 - p_a1.1).powi(2)).sqrt();
+                        let l2 = ((p_b2.0 - p_a2.0).powi(2) + (p_b2.1 - p_a2.1).powi(2)).sqrt();
+                        if l1 > 1e-6 && l2 > 1e-6 {
+                            let rel = (l1 - l2).abs() / l1.max(l2);
+                            if rel <= 0.02 {
+                                self.add_constraint_if_independent(si, Constraint::Equal { a: a1, b: b1, c: a2, d: b2 });
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
     /// Delete constraint `ci` of a sketch. For a midpoint constraint the orphaned midpoint is pruned as well
@@ -1277,6 +1432,26 @@ impl Project {
                     let (x, y) = (p.x - cx, p.y - cy);
                     p.x = cx + x * cs - y * sn;
                     p.y = cy + x * sn + y * cs;
+                }
+            }
+            for c in s.constraints.iter_mut() {
+                if let Constraint::Distance { a, b, axis, .. } = c {
+                    if pts.contains(a) && pts.contains(b) {
+                        let at = |id: Id| s.points.iter().find(|q| q.id == id).map(|q| (q.x, q.y));
+                        if let (Some(pa), Some(pb)) = (at(*a), at(*b)) {
+                            let (dx, dy) = (pb.0 - pa.0, pb.1 - pa.1);
+                            let ang = dy.atan2(dx).to_degrees().rem_euclid(180.0);
+                            let is_horiz = ang < 1e-4 || (ang - 180.0).abs() < 1e-4;
+                            let is_vert = (ang - 90.0).abs() < 1e-4;
+                            if is_horiz {
+                                *axis = 1;
+                            } else if is_vert {
+                                *axis = 2;
+                            } else {
+                                *axis = 0;
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -3348,7 +3523,7 @@ impl Project {
         }
         out
     }
-    pub(super) fn solve_sketch_inner(&mut self, si: usize, drag: Option<(Id, f64, f64)>, max_iter: usize) -> f64 {
+    pub(super) fn solve_sketch_inner(&mut self, si: usize, drag: Option<crate::solver::DragPull2d>, max_iter: usize) -> f64 {
         // The radius variables and the implicit arc constraints are computed before the mutable borrow.
         let mut radii = self.entity_radii(si);
         let intrinsics = self.entity_intrinsics(si);
@@ -3380,16 +3555,33 @@ impl Project {
                 (q.x, q.y) = (m.at.x, m.at.y);
             }
         }
-        // A RECTANGLE DRAGGED BY ITS CENTRE GOES WITH IT AS A WHOLE, as a circle goes with its centre: its corners are
+        // A SHAPE DRAGGED BY ITS CENTRE GOES WITH IT AS A WHOLE, as a circle goes with its centre: its points are
         // carried by the move of the centre before the solve. Left where they stood, the drag pulled the centre alone,
-        // the middle of the diagonal pulled it back by the two corners on it, and the rectangle hardly moved.
-        if let Some((d, tx, ty)) = drag {
-            let carried: Vec<Id> = s.rects.iter().filter(|r| r.centre == d).flat_map(|r| r.corners).collect();
-            if let Some((cx, cy)) = s.points.iter().find(|q| q.id == d).map(|q| (q.x, q.y)) {
+        // and the shape distorted or refused to move.
+        if let Some(d) = drag {
+            let (d_id, tx, ty) = (d.point, d.x, d.y);
+            let mut carried: Vec<Id> = s.rects.iter().filter(|r| r.centre == d_id).flat_map(|r| r.corners).collect();
+            if let Some(pts) = s.slot_points_of(d_id) {
+                carried.extend(pts);
+            }
+            for e in &s.entities {
+                match e.kind {
+                    EntityKind::Ellipse { c, ma, mi } if c == d_id => {
+                        carried.push(ma);
+                        carried.push(mi);
+                    }
+                    EntityKind::Arc { center, a, b, .. } if center == d_id && !s.is_fillet_arc(center) && s.slot_points_of(center).is_none() => {
+                        carried.push(a);
+                        carried.push(b);
+                    }
+                    _ => {}
+                }
+            }
+            if let Some((cx, cy)) = s.points.iter().find(|q| q.id == d_id).map(|q| (q.x, q.y)) {
                 if !carried.is_empty() {
                     let held = s.held_points();
                     let (dx, dy) = (tx - cx, ty - cy);
-                    for q in s.points.iter_mut().filter(|q| (carried.contains(&q.id) || q.id == d) && !held.contains(&q.id)) {
+                    for q in s.points.iter_mut().filter(|q| (carried.contains(&q.id) || q.id == d_id) && !held.contains(&q.id)) {
                         q.x += dx;
                         q.y += dy;
                     }
@@ -3407,7 +3599,7 @@ impl Project {
         // solve (`held_for_size`) is let go when the sketch does not solve with it - a dimension that moves the
         // rectangle as a whole.
         let anchors: Vec<Constraint> =
-            s.rects.iter().filter_map(|r| held_for_size(r, drag.map(|(d, _, _)| d))).filter(|p| s.points.iter().any(|q| q.id == *p)).map(|p| Constraint::Fixed { p }).collect();
+            s.rects.iter().filter_map(|r| held_for_size(r, drag.map(|d| d.point))).filter(|p| s.points.iter().any(|q| q.id == *p)).map(|p| Constraint::Fixed { p }).collect();
         let resid = if anchors.is_empty() {
             crate::solver::solve_full_iter(&mut s.points, &mut radii, &active, drag, max_iter)
         } else {

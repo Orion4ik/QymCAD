@@ -109,6 +109,31 @@ impl Place {
     }
 }
 
+/// The placement of an Object Coordinate System (OCS) in WCS, following the AutoCAD Arbitrary Axis Algorithm.
+fn ocs_place(normal: &dxf::Vector, elevation: f64) -> Place {
+    let (nx, ny, nz) = (normal.x, normal.y, normal.z);
+    let len = (nx * nx + ny * ny + nz * nz).sqrt();
+    if len <= 1e-9 {
+        return Place::IDENTITY;
+    }
+    let (nx, ny, nz) = (nx / len, ny / len, nz / len);
+    let (ax, ay, az) = if nx.abs() < 1.0 / 64.0 && ny.abs() < 1.0 / 64.0 { (0.0, 1.0, 0.0) } else { (0.0, 0.0, 1.0) };
+    let (xx, xy, xz) = (ay * nz - az * ny, az * nx - ax * nz, ax * ny - ay * nx);
+    let x_len = (xx * xx + xy * xy + xz * xz).sqrt();
+    if x_len <= 1e-9 {
+        return Place::IDENTITY;
+    }
+    let (xx, xy, xz) = (xx / x_len, xy / x_len, xz / x_len);
+    let (yx, yy, yz) = (ny * xz - nz * xy, nz * xx - nx * xz, nx * xy - ny * xx);
+    let y_len = (yx * yx + yy * yy + yz * yz).sqrt();
+    if y_len <= 1e-9 {
+        return Place::IDENTITY;
+    }
+    let (yx, yy) = (yx / y_len, yy / y_len);
+
+    Place { a: xx, b: yx, c: xy, d: yy, tx: elevation * nx, ty: elevation * ny }
+}
+
 /// Read `entities` placed by `place` into `curves`, counting the kinds not read into `skipped`.
 fn read(drawing: &Drawing, entities: &[&Entity], place: &Place, depth: usize, curves: &mut Vec<ProfEdge>, skipped: &mut std::collections::BTreeMap<String, usize>) {
     for entity in entities {
@@ -116,32 +141,38 @@ fn read(drawing: &Drawing, entities: &[&Entity], place: &Place, depth: usize, cu
             EntityType::Line(line) => {
                 curves.push(ProfEdge::Line { a: place.at(line.p1.x, line.p1.y), b: place.at(line.p2.x, line.p2.y) });
             }
-            EntityType::Circle(c) => match place.uniform() {
-                Some((k, _)) => curves.push(ProfEdge::Circle { center: place.at(c.center.x, c.center.y), r: c.radius * k }),
-                None => run(|t| place.at(c.center.x + c.radius * t.cos(), c.center.y + c.radius * t.sin()), 0.0, std::f64::consts::TAU, curves),
-            },
+            EntityType::Circle(c) => {
+                let ep = place.then(&ocs_place(&c.normal, c.center.z));
+                match ep.uniform() {
+                    Some((k, _)) => curves.push(ProfEdge::Circle { center: ep.at(c.center.x, c.center.y), r: c.radius * k }),
+                    None => run(|t| ep.at(c.center.x + c.radius * t.cos(), c.center.y + c.radius * t.sin()), 0.0, std::f64::consts::TAU, curves),
+                }
+            }
             EntityType::Arc(a) => {
+                let ep = place.then(&ocs_place(&a.normal, a.center.z));
                 let (from, to) = (a.start_angle.to_radians(), a.end_angle.to_radians());
-                match place.uniform() {
+                match ep.uniform() {
                     Some((_, mirrored)) => {
                         let arc = arc_from_angles(Point2::new(a.center.x, a.center.y), a.radius, from, to);
                         let ProfEdge::Arc { a: p, b: q, center, .. } = arc else { continue };
-                        let (p, q, center) = (place.at(p.x, p.y), place.at(q.x, q.y), place.at(center.x, center.y));
+                        let (p, q, center) = (ep.at(p.x, p.y), ep.at(q.x, q.y), ep.at(center.x, center.y));
                         curves.push(ProfEdge::Arc { a: p, b: q, center, ccw: !mirrored });
                     }
                     _ => {
                         let to = if to <= from { to + std::f64::consts::TAU } else { to };
-                        run(|t| place.at(a.center.x + a.radius * t.cos(), a.center.y + a.radius * t.sin()), from, to, curves);
+                        run(|t| ep.at(a.center.x + a.radius * t.cos(), a.center.y + a.radius * t.sin()), from, to, curves);
                     }
                 }
             }
             EntityType::LwPolyline(p) => {
+                let ep = place.then(&ocs_place(&p.extrusion_direction, entity.common.elevation));
                 let verts: Vec<(Point2, f64)> = p.vertices.iter().map(|v| (Point2::new(v.x, v.y), v.bulge)).collect();
-                placed_polyline(&verts, is_closed_flag(p.flags), place, curves);
+                placed_polyline(&verts, is_closed_flag(p.flags), &ep, curves);
             }
             EntityType::Polyline(p) => {
+                let ep = place.then(&ocs_place(&p.normal, p.location.z));
                 let verts: Vec<(Point2, f64)> = p.vertices().map(|v| (Point2::new(v.location.x, v.location.y), v.bulge)).collect();
-                placed_polyline(&verts, p.is_closed(), place, curves);
+                placed_polyline(&verts, p.is_closed(), &ep, curves);
             }
             EntityType::Ellipse(e) => {
                 // the minor axis is the normal turned across the major one, shortened by the ratio

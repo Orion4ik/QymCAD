@@ -30,7 +30,7 @@ fn pulling_the_last_part_moves_both_links() {
 
     let (b0, c0) = (at(&p, b), at(&p, c));
     // pull C by 30 along X and 20 along Z: only the first link can give along X and only the second along Z
-    p.drag_pull = Some((c, [0.0, 0.0, 0.0], [c0[0] + 30.0, c0[1], c0[2] + 20.0]));
+    p.drag_pull = Some(qymcad_core::model::DragPull::new(c, [0.0, 0.0, 0.0], [c0[0] + 30.0, c0[1], c0[2] + 20.0]));
     p.solve_joints();
     p.drag_pull = None;
 

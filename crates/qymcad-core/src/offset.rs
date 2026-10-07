@@ -30,7 +30,12 @@ pub fn offset_bulge(verts: &[BVert], dist: f64) -> Vec<Vec<BVert>> {
     for v in verts {
         pl.add(v.x, v.y, v.bulge);
     }
-    pl.parallel_offset(dist)
+    // In cavalier_contours, pl.area() is signed (positive for CCW, negative for CW).
+    // For CCW loops, positive offset moves inwards and negative moves outwards.
+    // For CW loops, positive offset moves outwards and negative moves inwards.
+    // To make positive dist consistently expand outwards (like circles: r + dist):
+    let cav_dist = if pl.area() > 0.0 { -dist } else { dist };
+    pl.parallel_offset(cav_dist)
         .iter()
         .map(|r| {
             (0..r.vertex_count())

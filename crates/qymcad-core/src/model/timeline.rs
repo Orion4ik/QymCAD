@@ -610,7 +610,6 @@ impl Project {
     /// cut — four nodes for one action. In the timeline that reads as a revolve falling apart into two features
     /// doing an add instead of a cut; it could only be edited one contour at a time, and deleting any of the
     /// nodes took the whole chain below with it. One operation is now one node, as for an extrude.
-    #[allow(clippy::too_many_arguments)]
     pub fn add_revolve_multi_op(&mut self, sketch: Id, profiles: Vec<Id>, ax: super::RevolveAxis, turn: super::RevolveTurn, src: Id, op: u8) -> Id {
         let (super::RevolveAxis { axis, datum: axis_datum, line: axis_line }, super::RevolveTurn { angle, reach }) = (ax, turn);
         use crate::feature::{FeatureKind, FeatureNode};
@@ -1179,7 +1178,6 @@ impl Project {
     /// selects the reference face. `ref_face` is the persistent id of a manually chosen reference face (zero
     /// selects it automatically from `flip`). Asymmetry requires an explicit edge selection; for "every edge"
     /// the kernel falls back to a symmetric chamfer.
-    #[allow(clippy::too_many_arguments)]
     pub fn add_chamfer_ex(&mut self, src: Id, dist: f64, shape: super::ChamferShape, edges: Vec<u32>) -> Id {
         let super::ChamferShape { mode, d2, flip, ref_face } = shape;
         use crate::feature::{FeatureKind, FeatureNode};
@@ -1363,7 +1361,6 @@ impl Project {
     }
 
     /// Linear pattern as a full 3D grid: three independent directions (count by count2 by count3).
-    #[allow(clippy::too_many_arguments)]
     pub fn add_linear_array_grid3(&mut self, src: Id, axes: [crate::model::ArrayAxis; 3]) -> Id {
         use crate::feature::{FeatureKind, FeatureNode};
         // The document still holds the twelve numbers loose; only the way in is named.
@@ -1431,7 +1428,6 @@ impl Project {
 
     /// Hole with a type: `kind` is 0 for a plain hole, 1 for a counterbore and 2 for a countersink; `dia2` and
     /// `depth2` are the parameters of the recess.
-    #[allow(clippy::too_many_arguments)]
     pub fn add_hole_typed(&mut self, src: Id, face: crate::feature::FaceKey, tool: super::HoleTool) -> Id {
         self.add_hole_at(src, face, face.centroid, tool)
     }
@@ -1462,7 +1458,6 @@ impl Project {
     /// Holes at sketch points: one hole per isolated point of `sketch`. `src` is the stock body, drilled along
     /// the sketch normal (`flip` reverses it). The hole parameters (`kind`, `dia2`, `depth2`) are as for a
     /// single hole. One timeline node covers every hole.
-    #[allow(clippy::too_many_arguments)]
     pub fn add_hole_from_sketch(&mut self, src: Id, sketch: Id, tool: super::HoleTool, flip: bool) -> Id {
         let super::HoleTool { kind, diameter, depth, dia2, depth2 } = tool;
         use crate::feature::{FeatureKind, FeatureNode};
@@ -1485,7 +1480,6 @@ impl Project {
     /// Thread on a cylinder (external) or in a hole (internal) of body `src`, associated with the circular edge
     /// `edge`, whose rim supplies the axis and the radius from `regen_edges` on every rebuild. The real turn
     /// geometry (a helix swept and cut) is removed from `src`, producing a new body.
-    #[allow(clippy::too_many_arguments)]
     pub fn add_thread(&mut self, src: Id, edge: u32, spec: crate::thread::ThreadSpec, length: f64, lead_in: f64, lead_out: f64) -> Id {
         use crate::feature::{FeatureKind, FeatureNode};
         let body = self.alloc_id();

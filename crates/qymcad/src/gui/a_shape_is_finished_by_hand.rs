@@ -522,4 +522,32 @@ mod tests {
         }
         assert!(problems.is_empty(), "a drawing is undone under another name:\n{}", problems.join("\n"));
     }
+
+    /// AN ARC BY CENTRE LANDS ITS END POINT ON THE ARC.
+    ///
+    /// The centre and the start give the circle the arc lies on; the third click gives the direction the arc
+    /// runs to, and its end point must lie on the arc at that radius, not at whatever distance the cursor clicked.
+    #[test]
+    fn an_arc_by_centre_lands_its_end_point_on_the_arc() {
+        let (mut app, si) = a_sketch();
+        // Centre at (0, 0), start at (20, 0) -> radius 20.
+        // Third click in the direction of +Y at (0, 5) -> distance 5 from centre.
+        Hand::new(&mut app).sk_tool(4).click2d(0.0, 0.0).click2d(20.0, 0.0).click2d(0.0, 5.0);
+        let sk = &app.project.sketches[si];
+        let arc = sk
+            .entities
+            .iter()
+            .find_map(|e| match e.kind {
+                EntityKind::Arc { center, a, b, .. } => Some((center, a, b)),
+                _ => None,
+            })
+            .expect("an arc was drawn");
+        let at = |id: u64| sk.points.iter().find(|p| p.id == id).map(|p| (p.x, p.y)).expect("point exists");
+        let (c, a, b) = (at(arc.0), at(arc.1), at(arc.2));
+        let ra = ((a.0 - c.0).powi(2) + (a.1 - c.1).powi(2)).sqrt();
+        let rb = ((b.0 - c.0).powi(2) + (b.1 - c.1).powi(2)).sqrt();
+        assert!((ra - 20.0).abs() < 1e-4, "start radius ra={ra}");
+        assert!((rb - 20.0).abs() < 1e-4, "end point must land on the arc: ra={ra}, rb={rb}, end was clicked at (0, 5)");
+        assert!((b.0 - 0.0).abs() < 1e-4 && (b.1 - 20.0).abs() < 1e-4, "end point projected to (0, 20): got {b:?}");
+    }
 }

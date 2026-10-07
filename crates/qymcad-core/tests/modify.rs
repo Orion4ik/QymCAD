@@ -123,6 +123,56 @@ fn offset_makes_inner_loop() {
     assert!(p.sketches[si].contour_ids.len() >= 2, "the original contour plus the offset one");
 }
 
+/// The side of an offset contour must depend only on the sign of the distance (+ is outward,
+/// - is inward), regardless of whether the contour was drawn clockwise or counter-clockwise.
+#[test]
+fn offset_side_is_independent_of_loop_traversal_direction() {
+    let mut p = Project::default();
+    let si_cw = p.new_sketch("cw");
+    // Clockwise square from (0, 0) to (10, 10):
+    // (0, 10) -> (10, 10) -> (10, 0) -> (0, 0) -> (0, 10)
+    let e_cw = [
+        p.add_line_entity(si_cw, 0.0, 10.0, 10.0, 10.0, qymcad_core::feature::Purpose::Real),
+        p.add_line_entity(si_cw, 10.0, 10.0, 10.0, 0.0, qymcad_core::feature::Purpose::Real),
+        p.add_line_entity(si_cw, 10.0, 0.0, 0.0, 0.0, qymcad_core::feature::Purpose::Real),
+        p.add_line_entity(si_cw, 0.0, 0.0, 0.0, 10.0, qymcad_core::feature::Purpose::Real),
+    ];
+    p.regen_sketch(si_cw);
+
+    let si_ccw = p.new_sketch("ccw");
+    // Counter-clockwise square from (0, 0) to (10, 10):
+    // (0, 0) -> (10, 0) -> (10, 10) -> (0, 10) -> (0, 0)
+    let e_ccw = [
+        p.add_line_entity(si_ccw, 0.0, 0.0, 10.0, 0.0, qymcad_core::feature::Purpose::Real),
+        p.add_line_entity(si_ccw, 10.0, 0.0, 10.0, 10.0, qymcad_core::feature::Purpose::Real),
+        p.add_line_entity(si_ccw, 10.0, 10.0, 0.0, 10.0, qymcad_core::feature::Purpose::Real),
+        p.add_line_entity(si_ccw, 0.0, 10.0, 0.0, 0.0, qymcad_core::feature::Purpose::Real),
+    ];
+    p.regen_sketch(si_ccw);
+
+    // Offset +2.0 (outwards) on both:
+    p.offset_entities(si_cw, &e_cw, 2.0);
+    p.offset_entities(si_ccw, &e_ccw, 2.0);
+
+    let min_max = |p: &Project, si: usize| {
+        let (mut min_x, mut max_x) = (f64::INFINITY, f64::NEG_INFINITY);
+        for pt in &p.sketches[si].points {
+            min_x = min_x.min(pt.x);
+            max_x = max_x.max(pt.x);
+        }
+        (min_x, max_x)
+    };
+
+    let (min_cw, max_cw) = min_max(&p, si_cw);
+    let (min_ccw, max_ccw) = min_max(&p, si_ccw);
+
+    assert!((min_cw - (-2.0)).abs() < 1e-4, "CW outward offset +2 should reach x = -2, got {min_cw}");
+    assert!((max_cw - 12.0).abs() < 1e-4, "CW outward offset +2 should reach x = 12, got {max_cw}");
+
+    assert!((min_ccw - (-2.0)).abs() < 1e-4, "CCW outward offset +2 should reach x = -2, got {min_ccw}");
+    assert!((max_ccw - 12.0).abs() < 1e-4, "CCW outward offset +2 should reach x = 12, got {max_ccw}");
+}
+
 #[test]
 fn trim_removes_middle_segment() {
     let mut p = Project::default();
@@ -570,7 +620,7 @@ fn fixed_point_resists_drag() {
     let a = p.sketch_point_at(si, 0.0, 0.0, 1e-6);
     p.sketches[si].constraints.push(Constraint::Fixed { p: a });
     // Attempt to drag the fixed point to (20,20).
-    p.solve_sketch_drag(si, Some((a, 20.0, 20.0)));
+    p.solve_sketch_drag(si, Some(qymcad_core::solver::DragPull2d::new(a, 20.0, 20.0)));
     let pa = p.sketches[si].points.iter().find(|q| q.id == a).unwrap();
     assert!(pa.x.abs() < 0.5 && pa.y.abs() < 0.5, "a fixed point must stay at (0,0): ({},{})", pa.x, pa.y);
 }

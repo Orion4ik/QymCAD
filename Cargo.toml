@@ -84,7 +84,7 @@ ron = "0.12"
 # tested against a table of leap centuries and year boundaries - correct, but a solved problem nobody
 # should have to review again. No formatting feature: the layout is built from the components, which keeps
 # the string byte for byte what it was.
-time = { version = "0.3", default-features = false, features = ["std"] }
+time = { version = "0.3", default-features = false, features = ["std", "local-offset"] }
 # nalgebra = "0.33"            # geometry and transforms
 # cavalier_contours = "0.3"   # arc-aware offset
 # rhai = "1"                  # the post-processor engine

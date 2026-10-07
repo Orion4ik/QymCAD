@@ -14,7 +14,6 @@ use super::*;
 ///
 impl App {
     /// THE 3D VIEWPORT: camera orbiting, grabbing the gizmo handles, picking, drawing the bodies.
-    #[allow(clippy::too_many_arguments)]
     pub(super) fn viewport_3d(&mut self, ctx: &egui::Context, resp: &egui::Response, painter: &egui::Painter, rect: Rect, has_geom: bool, scroll: f32) {
         if !self.viewing.cam.init && has_geom {
             crate::gui::fit3d(&mut self.viewing.cam, &self.project, rect);
@@ -158,6 +157,16 @@ impl App {
                 if let Some(pp) = resp.interact_pointer_pos() {
                     if self.face_arrow_hit(rect, pp, basis3) {
                         self.dragged.face_arrow_drag = Some(qymcad_ui_state::take_arrow_value(&resp.ctx, &self.tools.cmd, key));
+                    }
+                }
+            }
+            // THE HANDLE AT AN EDGE (fillet, chamfer): grabbing the edge radius handle
+            if matches!(self.tools.armed.cmd_kind(), 4 | 5) {
+                if let Some(pp) = resp.interact_pointer_pos() {
+                    let pn = self.painting();
+                    if qymcad_ui_state::edge_handle_hit(&pn, rect, pp, basis3) {
+                        let param_key = if self.tools.armed.cmd_kind() == 4 { "radius" } else { "dist" };
+                        self.dragged.edge_handle_drag = Some(qymcad_ui_state::take_arrow_value(&resp.ctx, &self.tools.cmd, param_key));
                     }
                 }
             }
@@ -308,6 +317,23 @@ impl App {
             }
             if resp.drag_stopped() {
                 self.dragged.face_arrow_drag = None;
+            }
+        } else if self.dragged.edge_handle_drag.is_some() {
+            // DRAGGING AN EDGE RADIUS HANDLE: the radius grows as dragged, updating parameters and live preview
+            if resp.dragged() {
+                if let Some(gizmo) = qymcad_ui_state::edge_radius_geometry(&self.painting()) {
+                    let scr = qymcad_ui_state::Screen { cam: &self.viewing.cam, set: &self.set, rect, basis: basis3 };
+                    qymcad_ui_state::edge_radius_drag_to(
+                        gizmo,
+                        &scr,
+                        &mut self.tools.cmd,
+                        &mut self.regen,
+                        resp.drag_delta(),
+                    );
+                }
+            }
+            if resp.drag_stopped() {
+                self.dragged.edge_handle_drag = None;
             }
         } else if qymcad_assembly::joint_drag_active(&self.side.joint, &self.dragged.part_pull) {
             // dragging a joint FREEDOM pulls the parameter (angle/offset/offset2), and solve_joints lays out the rest

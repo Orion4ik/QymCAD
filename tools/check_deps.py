@@ -1,15 +1,15 @@
 #!/usr/bin/env python3
-"""Обновить список выпущенных версий прямых зависимостей.
+"""Update the list of released versions of direct dependencies.
 
-СЕТЬ ЖИВЁТ ЗДЕСЬ, А НЕ В ПРОГОНЕ. Тест, ходящий в сеть, краснеет в поезде и в самолёте, и его глушат
-первым же. Поэтому спрашивает crates.io этот скрипт — по команде, — а сторож
-(`crates/qymcad/src/dependency_ratchet.rs`) сверяется с тем, что тут записано.
+THE NETWORK LIVES HERE, NOT IN THE TEST RUN. A test hitting the network turns red on a train or an aeroplane,
+and it is silenced first thing. Therefore crates.io is queried by this script - on command - while the guard
+(`crates/qymcad/src/dependency_ratchet.rs`) checks against what is recorded here.
 
-    python3 tools/check_deps.py            # показать разрыв
-    python3 tools/check_deps.py --refresh  # сходить на crates.io и переписать tools/deps.toml
+    python3 tools/check_deps.py            # show the gap
+    python3 tools/check_deps.py --refresh  # query crates.io and update tools/deps.toml
 
-Заметку «чем занят в программе» пишет человек: она нужна не машине, а тому, кто будет решать,
-поднимать версию или нет. Новая зависимость без заметки роняет сторож — намеренно.
+The note describing what a dependency does in the program is written by a human: it is needed not by a machine,
+but by whoever decides whether to raise a version or not. A new dependency without a note fails the guard on purpose.
 """
 
 import json
@@ -23,13 +23,12 @@ DEPS = ROOT / "tools" / "deps.toml"
 
 
 def declared() -> dict[str, str]:
-    """Прямые зависимости из всех манифестов: имя -> объявленная версия."""
+    """Direct dependencies from all manifests: name -> declared version."""
     out: dict[str, str] = {}
     for manifest in [ROOT / "Cargo.toml", *sorted((ROOT / "crates").glob("*/Cargo.toml"))]:
         text = manifest.read_text(encoding="utf-8")
-        # ЛЮБОЙ раздел, чьё имя кончается на `dependencies]`, — включая привязанные к системе
-        # (`[target.'cfg(windows)'.build-dependencies]`). Первая редакция знала только три имени и
-        # пропустила winresource, которым под Windows вшивается значок в .exe; нашёл это сторож в прогоне.
+        # ANY section ending in `dependencies]`, including platform-specific ones
+        # (`[target.'cfg(windows)'.build-dependencies]`).
         for block in re.findall(r"^\[[^\]]*dependencies\]\n(.*?)(?=^\[|\Z)", text, re.S | re.M):
             for line in block.splitlines():
                 line = line.split("#")[0].strip()
@@ -38,7 +37,7 @@ def declared() -> dict[str, str]:
                     continue
                 name, rhs = m.group(1), m.group(2)
                 if "path =" in rhs or "workspace = true" in rhs or "workspace.dependencies" in rhs:
-                    continue  # свои крейты и наследование — не наша забота
+                    continue  # internal crates and workspace inheritance are handled separately
                 v = re.search(r'version\s*=\s*"([^"]+)"', rhs) or re.match(r'^"([^"]+)"', rhs)
                 if v:
                     out[name] = v.group(1)
@@ -46,7 +45,7 @@ def declared() -> dict[str, str]:
 
 
 def read_notes() -> dict[str, dict]:
-    """Разбор tools/deps.toml без внешних библиотек: он нарочно простой."""
+    """Parse tools/deps.toml without external libraries: it is intentionally simple."""
     if not DEPS.exists():
         return {}
     notes, cur = {}, None
@@ -69,16 +68,16 @@ def latest(name: str) -> str | None:
     try:
         with urllib.request.urlopen(req, timeout=20) as r:
             return json.load(r)["crate"]["max_stable_version"]
-    except Exception as e:  # сеть не обязана работать
+    except Exception as e:  # network is not required to work
         print(f"  !! {name}: {e}", file=sys.stderr)
         return None
 
 
 def gap(declared_v: str, latest_v: str) -> int:
-    """На сколько выпусков отстали.
+    """Number of releases behind.
 
-    У версий `0.x` выпуском считается ВТОРОЕ число: 0.29 -> 0.36 это семь выпусков, а не ноль. Так
-    договорилось само сообщество Rust, и считать иначе значит не увидеть самого крупного отставания.
+    For `0.x` versions, the SECOND number counts as a release: 0.29 -> 0.36 is seven releases, not zero.
+    The Rust community itself treats it that way, and counting otherwise hides the largest lag.
     """
     d = [int(x) for x in re.findall(r"\d+", declared_v)[:2]] or [0]
     l = [int(x) for x in re.findall(r"\d+", latest_v)[:2]] or [0]
@@ -94,16 +93,15 @@ def main() -> int:
     have, notes = declared(), read_notes()
 
     if refresh:
-        print(">>> спрашиваю crates.io")
+        print(">>> querying crates.io")
         lines = [
-            "# ЧТО ВЫПУЩЕНО НА СВЕТЕ — снимок, обновляемый по команде `python3 tools/check_deps.py --refresh`.",
+            "# WHAT HAS BEEN RELEASED - a snapshot updated by `python3 tools/check_deps.py --refresh`.",
             "#",
-            "# Сторож `dependency_ratchet` сверяется с этим файлом, а не с сетью: тест, ходящий в сеть, краснеет",
-            "# в поезде и в самолёте, и его глушат первым же.",
+            "# The `dependency_ratchet` guard checks against this file rather than the network: a test hitting",
+            "# the network turns red on a train or an aeroplane, and it is silenced first thing.",
             "#",
-            "# `what` пишет ЧЕЛОВЕК и обновление его не трогает. Заметка нужна не машине, а тому, кто решает,",
-            "# поднимать версию или нет: разрыв в семь выпусков у отрисовщика и у разбора имён шрифтов - это",
-            "# разные разговоры.",
+            "# `what` is written by a HUMAN and the update leaves it untouched. The note is needed not by a machine,",
+            "# but by whoever decides whether to raise a version or not.",
             "",
         ]
         for name in sorted(have):
@@ -114,7 +112,7 @@ def main() -> int:
             lines.append(f'what = "{what}"')
             lines.append("")
         DEPS.write_text("\n".join(lines), encoding="utf-8")
-        print(f">>> записано в {DEPS.relative_to(ROOT)}")
+        print(f">>> written to {DEPS.relative_to(ROOT)}")
         notes = read_notes()
 
     rows, total = [], 0
@@ -126,11 +124,11 @@ def main() -> int:
         rows.append((g, name, have[name], lv, note.get("what", "")))
     rows.sort(reverse=True)
 
-    print(f"\n{'разрыв':>7}  {'пакет':<22} {'у нас':<10} {'вышло':<10} чем занят")
+    print(f"\n{'gap':>7}  {'crate':<22} {'declared':<10} {'latest':<10} purpose")
     for g, name, d, l, what in rows:
         mark = f"{g}" if g else "."
         print(f"{mark:>7}  {name:<22} {d:<10} {l:<10} {what}")
-    print(f"\nвсего выпусков отставания: {total}")
+    print(f"\ntotal releases behind: {total}")
     return 0
 
 

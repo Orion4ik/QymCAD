@@ -1881,6 +1881,34 @@ impl KernelJob {
     }
 }
 
+/// Circle or circular arc edge geometry: center, axis, and radius.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct CircleEdgeGeom {
+    pub center: [f64; 3],
+    pub axis: [f64; 3],
+    pub radius: f64,
+}
+
+impl CircleEdgeGeom {
+    pub fn new(center: [f64; 3], axis: [f64; 3], radius: f64) -> Self {
+        Self { center, axis, radius }
+    }
+}
+
+/// Geometry of a body edge: persistent id, polyline points, and optional circle geometry.
+#[derive(Clone, Debug, PartialEq)]
+pub struct BodyEdgeGeom {
+    pub id: u32,
+    pub poly: Vec<[f64; 3]>,
+    pub circle: Option<CircleEdgeGeom>,
+}
+
+impl BodyEdgeGeom {
+    pub fn new(id: u32, poly: Vec<[f64; 3]>, circle: Option<CircleEdgeGeom>) -> Self {
+        Self { id, poly, circle }
+    }
+}
+
 pub trait Kernel {
     fn extrude(&self, body: Id, profile: &[f64], height: f64, place: [f64; 12]) -> Result<Built, crate::errors::CoreError>;
     fn revolve(&self, body: Id, profile: &[f64], axis: u8, angle_deg: f64, place: [f64; 12]) -> Result<Built, crate::errors::CoreError>;
@@ -1960,7 +1988,6 @@ pub trait Kernel {
     /// `offsets` marks where section i starts within `sections` (length nsec + 1), and `places` holds the 3x4
     /// placement per section (length nsec * 12). `ruled` gives straight faces and `solid` closes the result
     /// into a body. The default implementation is a fallback.
-    #[allow(clippy::too_many_arguments)]
     fn loft(&self, _body: Id, _sections: LoftSections, _walls: LoftWalls, _kind: LoftBody, _caps: [u32; 2]) -> Result<Built, crate::errors::CoreError> {
         Err(crate::errors::CoreError::KernelRequired(crate::errors::Op::Loft))
     }
@@ -2107,7 +2134,6 @@ pub trait Kernel {
     /// `ref_face` is the persistent id of a manually chosen reference face (0 selects it automatically from
     /// `flip`). `Symmetric` falls through to a plain `chamfer(d1)`. It requires an explicit edge selection,
     /// since asymmetry is not defined for "every edge". The mock default is a symmetric `chamfer(d1)`.
-    #[allow(clippy::too_many_arguments)]
     fn chamfer_ex(&self, body: Id, src: Id, d1: f64, _shape: crate::model::ChamferShape, edges: &[u32]) -> Result<Built, crate::errors::CoreError> {
         self.chamfer(body, src, d1, edges, BlendNames { surfaces: &[], corners: &[], all: &[] })
     }
@@ -2161,7 +2187,6 @@ pub trait Kernel {
     /// Draft: tilt the faces named by `face_ids` on body `src` by `angle` degrees relative to the neutral
     /// plane (`np_origin`, `np_normal`) along the pull direction `pull`. Requires a real kernel; the mock is a
     /// stub.
-    #[allow(clippy::too_many_arguments)]
     fn draft(&self, _body: Id, _src: Id, _face_ids: &[u32], _pull: DraftPull, _neutral: PlaneAt, _sides: &[u32]) -> Result<Built, crate::errors::CoreError> {
         Err(crate::errors::CoreError::KernelRequired(crate::errors::Op::Draft))
     }
@@ -2224,6 +2249,15 @@ pub trait Kernel {
         1
     }
 
+    /// Whether two bodies share a sub-shape (a face, edge, etc.).
+    ///
+    /// The rebuild uses this to decide whether two nodes whose inputs are different bodies can safely run
+    /// in parallel on worker threads: two pieces of a split body share the cut face, and meshing that face
+    /// concurrently from two threads corrupts its triangulation.
+    fn shares(&self, _a: Id, _b: Id) -> bool {
+        false
+    }
+
     /// A KERNEL OF ITS OWN FOR ANOTHER THREAD, holding the bodies asked for AND NOTHING ELSE.
     ///
     /// This is what lets a wave of independent nodes be computed at once. The shapes are MOVED rather than
@@ -2259,8 +2293,7 @@ pub trait Kernel {
     /// Edge geometry of a body: for each edge, its persistent name, a polyline in body local space and, for a
     /// circular edge, its exact centre, axis and radius. Needed by projection into a sketch: a circle has to
     /// project as a circle rather than as a tessellated polyline.
-    #[allow(clippy::type_complexity)]
-    fn body_edge_geometry(&self, _body: Id) -> Vec<(u32, Vec<[f64; 3]>, Option<([f64; 3], [f64; 3], f64)>)> {
+    fn body_edge_geometry(&self, _body: Id) -> Vec<BodyEdgeGeom> {
         Vec::new()
     }
 

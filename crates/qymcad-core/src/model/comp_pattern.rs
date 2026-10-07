@@ -46,6 +46,12 @@ pub fn one_way() -> [([f64; 3], f64, u32); 2] {
     [([0.0, 1.0, 0.0], 0.0, 1), ([0.0, 0.0, 1.0], 0.0, 1)]
 }
 
+/// Ceiling on the total number of instances a pattern may produce.
+///
+/// Prevents arithmetic overflow when multiplying grid dimensions and resource exhaustion
+/// when instantiating components and bodies.
+pub const MAX_PATTERN_INSTANCES: u32 = 10_000;
+
 impl CompPatternKind {
     /// A linear pattern along one direction.
     pub fn linear(dir: [f64; 3], step: f64, count: u32) -> Self {
@@ -53,11 +59,21 @@ impl CompPatternKind {
     }
 
     /// How many instances there are in total, including the source, which is the first: along a grid, the product of
-    /// the counts of its directions.
+    /// the counts of its directions. Capped at [`MAX_PATTERN_INSTANCES`] to prevent overflow.
     pub fn count(&self) -> u32 {
+        self.raw_count().min(MAX_PATTERN_INSTANCES as u64) as u32
+    }
+
+    /// The total instance count across all directions with overflow-safe arithmetic.
+    pub fn raw_count(&self) -> u64 {
         match *self {
-            CompPatternKind::Linear { count, more, .. } => count.max(1) * more[0].2.max(1) * more[1].2.max(1),
-            CompPatternKind::Circular { count, .. } => count.max(1),
+            CompPatternKind::Linear { count, more, .. } => {
+                let c1 = count.max(1) as u64;
+                let c2 = more[0].2.max(1) as u64;
+                let c3 = more[1].2.max(1) as u64;
+                c1.saturating_mul(c2).saturating_mul(c3)
+            }
+            CompPatternKind::Circular { count, .. } => count.max(1) as u64,
         }
     }
 
@@ -66,8 +82,11 @@ impl CompPatternKind {
         match *self {
             CompPatternKind::Linear { dir, step, count, more } => {
                 // instance i of the grid: along the first direction first, then the second, then the third
-                let (c1, c2) = (count.max(1), more[0].2.max(1));
-                let (a, b, c) = (i % c1, (i / c1) % c2, i / (c1 * c2));
+                let (c1, c2) = (count.max(1) as u64, more[0].2.max(1) as u64);
+                let c1_c2 = c1.saturating_mul(c2).max(1);
+                let a = i as u64 % c1;
+                let b = (i as u64 / c1) % c2;
+                let c = i as u64 / c1_c2;
                 let mut m = PLACE_IDENTITY;
                 for (d, s, k) in [(dir, step, a), (more[0].0, more[0].1, b), (more[1].0, more[1].1, c)] {
                     let t = k as f64 * s;
@@ -103,7 +122,7 @@ impl Project {
     /// the node; zero means the source is unsuitable, having no body or being the root of the document, or the layout
     /// makes no copy - a pattern of one instance is the source alone, and a node for it would change nothing.
     pub fn add_comp_pattern(&mut self, src: Id, kind: CompPatternKind) -> Id {
-        if src == self.root || !self.components.iter().any(|c| c.id == src) || kind.count() < 2 {
+        if src == self.root || !self.components.iter().any(|c| c.id == src) || kind.count() < 2 || kind.raw_count() > MAX_PATTERN_INSTANCES as u64 {
             return 0;
         }
         if self.active_body(src).is_none() {
@@ -126,6 +145,9 @@ impl Project {
     /// change of the count.
     pub fn set_comp_pattern(&mut self, id: Id, kind: CompPatternKind) -> bool {
         let Some(i) = self.timeline.iter().position(|n| n.id == id && matches!(n.kind, FeatureKind::ComponentPattern { .. })) else { return false };
+        if kind.raw_count() > MAX_PATTERN_INSTANCES as u64 || kind.count() < 2 {
+            return false;
+        }
         let want = kind.count().saturating_sub(1) as usize;
         let mut gone = Vec::new();
         if let FeatureKind::ComponentPattern { kind: k, copies, bodies, .. } = &mut self.timeline[i].kind {

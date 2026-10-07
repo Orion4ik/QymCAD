@@ -19,13 +19,14 @@
 mod tests {
     use super::super::App;
     use qymcad_core::model::{Constraint, Id};
+    use qymcad_core::solver::DragPull2d;
 
     /// What a scene checks after the drag.
     struct Case {
         /// The sketch of the scene.
         si: usize,
         /// The point that gets dragged, and where to.
-        drag: Option<(Id, f64, f64)>,
+        drag: Option<DragPull2d>,
         /// The scene IS MEANT to be contradictory — the residual of the solver is large and must be.
         conflicting: bool,
     }
@@ -72,7 +73,7 @@ mod tests {
                 app.project.add_rect_entity(si, -30.0, -20.0, 30.0, 20.0, qymcad_core::feature::Purpose::Real);
                 app.project.regen_sketch(si);
                 let p = point_at(&app, si, 30.0, 20.0);
-                (app, Case { si, drag: Some((p, 45.0, 34.0)), conflicting: false })
+                (app, Case { si, drag: Some(DragPull2d::new(p, 45.0, 34.0)), conflicting: false })
             }),
             ("02-rect-fully-dimensioned", || {
                 let (mut app, si) = empty();
@@ -88,7 +89,7 @@ mod tests {
                 dim(&mut app, si, b, c, 25.0);
                 app.project.solve_sketch(si);
                 app.project.regen_sketch(si);
-                (app, Case { si, drag: Some((c, 80.0, 60.0)), conflicting: false })
+                (app, Case { si, drag: Some(DragPull2d::new(c, 80.0, 60.0)), conflicting: false })
             }),
             ("03-fillet-corner", || {
                 let (mut app, si) = empty();
@@ -100,28 +101,28 @@ mod tests {
                 }
                 app.project.regen_sketch(si);
                 let p = point_at(&app, si, -25.0, -16.0);
-                (app, Case { si, drag: Some((p, -34.0, -22.0)), conflicting: false })
+                (app, Case { si, drag: Some(DragPull2d::new(p, -34.0, -22.0)), conflicting: false })
             }),
             ("04-circle-with-radius", || {
                 let (mut app, si) = empty();
                 app.project.add_circle_entity(si, 10.0, 5.0, 12.0, qymcad_core::feature::Purpose::Real);
                 app.project.regen_sketch(si);
                 let c = point_at(&app, si, 10.0, 5.0);
-                (app, Case { si, drag: Some((c, 25.0, 18.0)), conflicting: false })
+                (app, Case { si, drag: Some(DragPull2d::new(c, 25.0, 18.0)), conflicting: false })
             }),
             ("05-slot", || {
                 let (mut app, si) = empty();
                 app.project.add_slot_entity(si, qymcad_core::geom::Point2::new(-18.0, 0.0), qymcad_core::geom::Point2::new(18.0, 0.0), 7.0, qymcad_core::feature::Purpose::Real);
                 app.project.regen_sketch(si);
                 let p = point_at(&app, si, 18.0, 0.0);
-                (app, Case { si, drag: Some((p, 30.0, 9.0)), conflicting: false })
+                (app, Case { si, drag: Some(DragPull2d::new(p, 30.0, 9.0)), conflicting: false })
             }),
             ("06-polygon", || {
                 let (mut app, si) = empty();
                 app.project.add_polygon_entity(si, qymcad_core::geom::Point2::new(0.0, 0.0), qymcad_core::geom::Point2::new(20.0, 0.0), 6, qymcad_core::feature::Purpose::Real);
                 app.project.regen_sketch(si);
                 let p = point_at(&app, si, 20.0, 0.0);
-                (app, Case { si, drag: Some((p, 28.0, 8.0)), conflicting: false })
+                (app, Case { si, drag: Some(DragPull2d::new(p, 28.0, 8.0)), conflicting: false })
             }),
             ("06b-polygon-rotated", || {
                 // ROTATED: a check that the radius leader goes into the gap at ANY rotation and not only
@@ -130,7 +131,7 @@ mod tests {
                 app.project.add_polygon_entity(si, qymcad_core::geom::Point2::new(0.0, 0.0), qymcad_core::geom::Point2::new(14.0, 14.0), 5, qymcad_core::feature::Purpose::Real);
                 app.project.regen_sketch(si);
                 let p = point_at(&app, si, 14.0, 14.0);
-                (app, Case { si, drag: Some((p, 22.0, 16.0)), conflicting: false })
+                (app, Case { si, drag: Some(DragPull2d::new(p, 22.0, 16.0)), conflicting: false })
             }),
             ("07-ellipse", || {
                 let (mut app, si) = empty();
@@ -140,7 +141,7 @@ mod tests {
                 app.project.add_ellipse_entity(si, qymcad_core::geom::Point2::new(14.0, 8.0), 24.0, 12.0, 0.0, qymcad_core::feature::Purpose::Real);
                 app.project.regen_sketch(si);
                 let p = point_at(&app, si, 14.0, 8.0);
-                (app, Case { si, drag: Some((p, 26.0, 18.0)), conflicting: false })
+                (app, Case { si, drag: Some(DragPull2d::new(p, 26.0, 18.0)), conflicting: false })
             }),
             ("08-arc-and-lines", || {
                 let (mut app, si) = empty();
@@ -156,7 +157,7 @@ mod tests {
                 app.project.add_line_entity(si, 10.0, 0.0, 30.0, 0.0, qymcad_core::feature::Purpose::Real);
                 app.project.regen_sketch(si);
                 let p = point_at(&app, si, -30.0, -10.0);
-                (app, Case { si, drag: Some((p, -40.0, -18.0)), conflicting: false })
+                (app, Case { si, drag: Some(DragPull2d::new(p, -40.0, -18.0)), conflicting: false })
             }),
             ("09-perpendicular-and-equal", || {
                 let (mut app, si) = empty();
@@ -173,7 +174,7 @@ mod tests {
                 app.project.sketches[si].constraints.push(Constraint::Equal { a, b, c: b, d });
                 app.project.solve_sketch(si);
                 app.project.regen_sketch(si);
-                (app, Case { si, drag: Some((d, 44.0, 30.0)), conflicting: false })
+                (app, Case { si, drag: Some(DragPull2d::new(d, 44.0, 30.0)), conflicting: false })
             }),
             ("10-two-rects-mirrored", || {
                 let (mut app, si) = empty();
@@ -181,7 +182,7 @@ mod tests {
                 app.project.add_rect_entity(si, -26.0, -10.0, -6.0, 10.0, qymcad_core::feature::Purpose::Real);
                 app.project.regen_sketch(si);
                 let p = point_at(&app, si, 26.0, 10.0);
-                (app, Case { si, drag: Some((p, 36.0, 18.0)), conflicting: false })
+                (app, Case { si, drag: Some(DragPull2d::new(p, 36.0, 18.0)), conflicting: false })
             }),
             ("11-redundant-dimension", || {
                 // A REDUNDANT BUT NOT CONTRADICTORY dimension: the same value the constraints already
@@ -197,7 +198,7 @@ mod tests {
                 dim(&mut app, si, d, c, 40.0); // the same width along the top — already held by the rectangularity
                 app.project.solve_sketch(si);
                 app.project.regen_sketch(si);
-                (app, Case { si, drag: Some((c, 60.0, 40.0)), conflicting: false })
+                (app, Case { si, drag: Some(DragPull2d::new(c, 60.0, 40.0)), conflicting: false })
             }),
             ("12-conflicting-dimensions", || {
                 // THE CONTRADICTION IS DELIBERATE: two incompatible lengths for one side.
@@ -260,7 +261,8 @@ mod tests {
             invariants(&app, case.si, "after building", name, &mut bad);
             let ents = app.project.sketches[case.si].entities.len();
 
-            let Some((pid, tx, ty)) = case.drag else { continue };
+            let Some(d) = case.drag else { continue };
+            let (pid, tx, ty) = (d.point, d.x, d.y);
             let before = xy(&app, case.si, pid);
             let (dof, redun) = app.project.sketch_dof(case.si);
 
@@ -269,7 +271,7 @@ mod tests {
             for k in 1..=6 {
                 let t = k as f64 / 6.0;
                 let (x, y) = (before.0 + (tx - before.0) * t, before.1 + (ty - before.1) * t);
-                app.project.solve_sketch_drag_fast(case.si, Some((pid, x, y)));
+                app.project.solve_sketch_drag_fast(case.si, Some(DragPull2d::new(pid, x, y)));
             }
             // THE RELEASE IS A FULL SOLVE WITH NO PIN TO THE CURSOR, exactly as the program does it. The
             // first edition measured the residual WITH the point pinned to the cursor and declared "the
@@ -482,11 +484,12 @@ mod tests {
             let (mut app, case) = build();
             let si = case.si;
             save(&dir, &format!("{name}-a"), &shot(&mut app, si));
-            if let Some((pid, tx, ty)) = case.drag {
+            if let Some(d) = case.drag {
+                let (pid, tx, ty) = (d.point, d.x, d.y);
                 let b = xy(&app, si, pid);
                 for k in 1..=6 {
                     let t = k as f64 / 6.0;
-                    app.project.solve_sketch_drag_fast(si, Some((pid, b.0 + (tx - b.0) * t, b.1 + (ty - b.1) * t)));
+                    app.project.solve_sketch_drag_fast(si, Some(DragPull2d::new(pid, b.0 + (tx - b.0) * t, b.1 + (ty - b.1) * t)));
                 }
                 save(&dir, &format!("{name}-b"), &shot(&mut app, si));
                 app.project.solve_sketch(si);

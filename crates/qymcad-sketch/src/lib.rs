@@ -419,6 +419,19 @@ pub fn pre_select(sk: &mut qymcad_ui_state::SketchCtx, rect: Rect, hover: Option
     let none = PreSelect { sketch: None, constraint: None };
     let (qymcad_ui_state::Sel::Sketch(si), Some(hp)) = (*sk.sel, hover) else { return none };
     let still = !dragged && sk.drag.pt().is_none() && sk.drag.mov().is_none();
+    if sk.armed.draw_kind() == 1 {
+        if sk.tool.pts.is_empty() {
+            sk.tool.hover_line = None;
+        } else if still {
+            if let Some((1, eid)) = sketch_hit(&sk.pick(), rect, hp, si) {
+                if let Some(s) = sk.project.sketches.get(si) {
+                    if s.entities.iter().any(|e| e.id == eid && matches!(e.kind, qymcad_core::model::EntityKind::Line { .. })) {
+                        sk.tool.hover_line = Some(eid);
+                    }
+                }
+            }
+        }
+    }
     if qymcad_ui_state::edit_si(sk.project, sk.sketch_ses) != Some(si) || sk.armed.draw_kind() != 0 || sk.armed.dim_kind() != 0 || !still {
         return none;
     }
@@ -1215,12 +1228,12 @@ pub fn poly_input_popup(pl: &mut qymcad_ui_state::PlaceCtx, ctx: &egui::Context,
 /// Automatic constraints while drawing the segment prev-p1-p2: horizontal or vertical, perpendicular to
 /// the previous segment, and a point-on-edge for the new end. Every constraint is added ONLY if it is
 /// independent (does not over-define the sketch), so no redundant ones appear.
-pub fn infer_on_segment(project: &mut Project, view: qymcad_ui_state::View2d, si: usize, prev: Option<Point2>, p1: Point2, p2: Point2) {
+pub fn infer_on_segment(project: &mut Project, view: qymcad_ui_state::View2d, si: usize, prev: Option<Point2>, p1: Point2, p2: Point2, hover_line: Option<Id>) {
     use qymcad_core::model::Constraint;
     let a = project.sketch_point_at(si, p1.x, p1.y, 1e-6);
     let b = project.sketch_point_at(si, p2.x, p2.y, 1e-6);
     let (dx, dy) = ((p2.x - p1.x).abs(), (p2.y - p1.y).abs());
-    let tol = 0.06; // ~3.5°
+    let tol = 0.06; // ~3.5 deg
                     // 1) horizontal or vertical
     let mut axis_aligned = false;
     if dy <= dx * tol && dx > 1e-6 {
@@ -1244,9 +1257,9 @@ pub fn infer_on_segment(project: &mut Project, view: qymcad_ui_state::View2d, si
             }
         }
     }
-    // 2b) PARALLEL to the nearest non-axis line (when the new one did not land on an axis itself)
+    // 2b) PARALLEL to the hovered non-axis line (when the new one did not land on an axis itself)
     if !axis_aligned {
-        if let Some((la, lb)) = qymcad_pick::nearest_parallel_line(project, si, p1, p2, a, b) {
+        if let Some((la, lb)) = qymcad_pick::nearest_parallel_line(project, si, p1, p2, a, b, hover_line) {
             project.add_constraint_if_independent(si, Constraint::Parallel { a: la, b: lb, c: a, d: b });
         }
     }
@@ -1254,8 +1267,8 @@ pub fn infer_on_segment(project: &mut Project, view: qymcad_ui_state::View2d, si
     if let Some((cen, r)) = qymcad_pick::nearest_tangent_circle(project, si, p1, p2) {
         project.add_constraint_if_independent(si, Constraint::Tangent { a, b, c: cen, r });
     }
-    // 2d) EQUAL LENGTH to the nearest line of the same length
-    if let Some((la, lb)) = qymcad_pick::nearest_equal_line(project, si, p1, p2, a, b) {
+    // 2d) EQUAL LENGTH to the nearest adjacent or hovered line of the same length
+    if let Some((la, lb)) = qymcad_pick::nearest_equal_line(project, si, p1, p2, a, b, hover_line) {
         project.add_constraint_if_independent(si, Constraint::Equal { a: la, b: lb, c: a, d: b });
     }
     // 3) point on an edge: the new end landed on an existing line (not its own), so it is tied to it
@@ -1442,6 +1455,7 @@ pub fn end_construction(sk: &mut qymcad_ui_state::SketchCtx) {
     } else {
         sk.tool.pts.clear();
     }
+    sk.tool.hover_line = None;
 }
 
 /// A CLICK IN A SKETCH: what it is right now - a step of a drawing tool, the placing of a dimension, or
@@ -2281,6 +2295,8 @@ pub fn dim_click_inner(sk: &mut qymcad_ui_state::SketchCtx, rect: Rect, pos: Pos
                 return true;
             }
         }
+        *sk.cursor = Some(qymcad_ui_state::to_world(&*sk.view, rect, pos));
+        update_placing_dim(sk, rect);
         sk.place.dim = None;
         sk.dim.first = None;
         sk.dim.before = None; // placed: the length is the person's now
@@ -3079,8 +3095,9 @@ pub fn sketch_tool_click_inner(sk: &mut qymcad_ui_state::SketchCtx, rect: Rect, 
                 if !con && sk.set.auto_constrain {
                     // automatic constraints: horizontal or vertical, perpendicular to the previous segment,
                     // point-on-edge
-                    infer_on_segment(&mut *sk.project, *sk.view, si, prev, last, w);
+                    infer_on_segment(&mut *sk.project, *sk.view, si, prev, last, w, sk.tool.hover_line);
                 }
+                sk.tool.hover_line = None;
                 // stitch the ends to nearby existing vertices, so the corners do not fall apart. The
                 // tolerance is PERCEPTUAL, measured on screen: it used to be clamped to 2.0 mm, so at a
                 // distant zoom it welded ANY points within 2 mm, collapsing small geometry and neighbouring
@@ -3212,8 +3229,16 @@ pub fn sketch_tool_click_inner(sk: &mut qymcad_ui_state::SketchCtx, rect: Rect, 
                 } else {
                     // the centre, the start and the end
                     let (c, a, b) = (p0, p1, p2);
+                    let r = ((a.x - c.x).powi(2) + (a.y - c.y).powi(2)).sqrt();
+                    let end_pt = if r > 1e-6 && ((b.x - c.x).powi(2) + (b.y - c.y).powi(2)).sqrt() > 1e-9 {
+                        let ang = (b.y - c.y).atan2(b.x - c.x);
+                        Point2::new(c.x + r * ang.cos(), c.y + r * ang.sin())
+                    } else {
+                        Point2::new(b.x, b.y)
+                    };
                     let ccw = (a.x - c.x) * (b.y - c.y) - (a.y - c.y) * (b.x - c.x) > 0.0;
-                    sk.project.add_arc_entity(si, Point2::new(c.x, c.y), Point2::new(a.x, a.y), Point2::new(b.x, b.y), winding(ccw), qymcad_core::feature::Purpose::of(con));
+                    sk.project.add_arc_entity(si, Point2::new(c.x, c.y), Point2::new(a.x, a.y), end_pt, winding(ccw), qymcad_core::feature::Purpose::of(con));
+                    sk.project.solve_sketch(si);
                 }
                 sk.tool.pts.clear();
                 qymcad_ui_state::invalidate(&mut *sk.regen);
@@ -3487,16 +3512,8 @@ pub fn sketch_drag_start(sk: &mut qymcad_ui_state::SketchCtx, ctx: &egui::Contex
         if !sk.drag.active() && !ctrl {
             if let (qymcad_ui_state::Sel::Sketch(si), Some(pp)) = (*sk.sel, pp) {
                 if sk.project.is_typed_sketch(si) {
-                    // the points of arcs (the centre, the tangencies of fillets) are not dragged, or
-                    // the fillet breaks
-                    let mut arc_pts: std::collections::HashSet<Id> = sk.project.sketches[si]
-                        .entities
-                        .iter()
-                        .flat_map(|e| match e.kind {
-                            qymcad_core::model::EntityKind::Arc { center, a, b, .. } => vec![center, a, b],
-                            _ => vec![],
-                        })
-                        .collect();
+                    // Fillet arcs (their centre and tangency endpoints) are not dragged, or the fillet breaks.
+                    let mut arc_pts: std::collections::HashSet<Id> = sk.project.sketches[si].fillet_points();
                     // reference points (the origin, the axes, materialised midpoints) are not dragged
                     arc_pts.extend(sk.project.sketches[si].system_ids());
                     for c in &sk.project.sketches[si].constraints {
@@ -4031,7 +4048,7 @@ pub fn drag_point_to(sk: &mut qymcad_ui_state::SketchCtx, si: usize, pi: usize, 
     if let Some(id) = pid {
         // a drag frame takes the fast path (no re-evaluation of the parameters, a reduced iteration
         // budget). The full solve happens on release.
-        sk.project.solve_sketch_drag_fast(si, Some((id, w.x, w.y)));
+        sk.project.solve_sketch_drag_fast(si, Some(qymcad_core::solver::DragPull2d::new(id, w.x, w.y)));
     }
     qymcad_ui_state::invalidate(&mut *sk.regen);
 }
@@ -4443,6 +4460,10 @@ pub fn sketch_click_at(sk: &mut qymcad_ui_state::SketchCtx, ctx: &egui::Context,
 pub fn snap_world(sk: &mut qymcad_ui_state::SketchCtx, rect: Rect, screen: Pos2) -> Point2 {
     let sh = qymcad_ui_state::Sheet { view: *sk.view, rect };
     let w = qymcad_ui_state::to_world(&*sk.view, rect, screen);
+    if sk.place.dim.is_some() {
+        *sk.snap_hint = None;
+        return w;
+    }
     let sd = |p: Point2, view: &qymcad_ui_state::View2d| qymcad_ui_state::Sheet { view: *view, rect }.at(p).distance(screen);
     // the centres of the circles and arcs of the active sketch, so a centre can be told from a plain vertex
     let centers: std::collections::HashSet<u64> = qymcad_ui_state::edit_si(&*sk.project, &*sk.sketch_ses)
@@ -4796,6 +4817,7 @@ pub fn delete_selected_in_sketch(sk: &mut qymcad_ui_state::SketchCtx, si: usize)
 }
 
 fn delete_selected_in(sk: &mut qymcad_ui_state::SketchCtx, si: usize) {
+    sk.project.auto_constrain = sk.set.auto_constrain;
     if let Some(ti) = sk.annot.text.take() {
         if ti < sk.project.sketches[si].texts.len() {
             sk.project.delete_sketch_text(si, ti);

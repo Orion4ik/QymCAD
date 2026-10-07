@@ -254,7 +254,20 @@ fn accessor(doc: &Value, buffers: &[Vec<u8>], at: usize) -> Result<Vec<f64>, Str
     let buf = buffers.get(view["buffer"].as_u64().ok_or_else(bad)? as usize).ok_or_else(bad)?;
     let start = view["byteOffset"].as_u64().unwrap_or(0) as usize + a["byteOffset"].as_u64().unwrap_or(0) as usize;
     let stride = view["byteStride"].as_u64().map(|s| s as usize).unwrap_or(size * width);
-    let mut out = Vec::with_capacity(count * width);
+    if count == 0 {
+        return Ok(Vec::new());
+    }
+    let total_elements = count.checked_mul(width).ok_or_else(bad)?;
+    let item_bytes = size.checked_mul(width).ok_or_else(bad)?;
+    if stride < item_bytes {
+        return Err(bad());
+    }
+    let last_offset = (count - 1).checked_mul(stride).ok_or_else(bad)?;
+    let end_offset = start.checked_add(last_offset).and_then(|o| o.checked_add(item_bytes)).ok_or_else(bad)?;
+    if end_offset > buf.len() {
+        return Err(bad());
+    }
+    let mut out = Vec::with_capacity(total_elements);
     for i in 0..count {
         for k in 0..width {
             let at = start + i * stride + k * size;

@@ -210,4 +210,67 @@ mod tests {
              which is exactly how the graphics reached seven releases without a word.\n{table}"
         );
     }
+
+    /// EVERY CRATE IN THE WORKSPACE STATES ITS LICENCE.
+    ///
+    /// Every manifest in `crates/` must inherit `license.workspace = true` or declare its licence directly,
+    /// so that packaging tools and SBOM generators see every crate as licensed under AGPL-3.0-or-later.
+    #[test]
+    fn every_workspace_crate_declares_its_licence() {
+        if !in_the_working_tree() {
+            return;
+        }
+        let crates_dir = root().join("crates");
+        let entries = std::fs::read_dir(&crates_dir).expect("the crates directory reads");
+        let mut missing = Vec::new();
+        for entry in entries.flatten() {
+            let manifest = entry.path().join("Cargo.toml");
+            if !manifest.is_file() {
+                continue;
+            }
+            let text = std::fs::read_to_string(&manifest).expect("manifest reads");
+            if !text.lines().any(|l| l.trim().starts_with("license")) {
+                missing.push(entry.file_name().to_string_lossy().to_string());
+            }
+        }
+        missing.sort();
+        assert!(
+            missing.is_empty(),
+            "these crates have no `license` in their Cargo.toml: {missing:?}\n\
+             add `license.workspace = true` to the [package] section of each"
+        );
+    }
+
+    /// NO CRATE DRIFTS ON ICON VERSIONS.
+    ///
+    /// If one crate pulls `egui-phosphor = "0.11"` while another pulls `"0.13"`, Cargo resolves and compiles
+    /// duplicate versions and their font assets. Every crate using the icons must declare the same version.
+    #[test]
+    fn every_workspace_crate_uses_the_same_egui_phosphor_version() {
+        if !in_the_working_tree() {
+            return;
+        }
+        let crates_dir = root().join("crates");
+        let entries = std::fs::read_dir(&crates_dir).expect("the crates directory reads");
+        let mut versions: std::collections::BTreeMap<String, Vec<String>> = std::collections::BTreeMap::new();
+        for entry in entries.flatten() {
+            let manifest = entry.path().join("Cargo.toml");
+            if !manifest.is_file() {
+                continue;
+            }
+            let text = std::fs::read_to_string(&manifest).expect("manifest reads");
+            for line in text.lines() {
+                let t = line.trim();
+                if let Some(rhs) = t.strip_prefix("egui-phosphor = ") {
+                    let ver = rhs.trim().trim_matches('"').to_string();
+                    versions.entry(ver).or_default().push(entry.file_name().to_string_lossy().to_string());
+                }
+            }
+        }
+        assert!(
+            versions.len() <= 1,
+            "multiple versions of egui-phosphor found in workspace crates: {versions:?}\n\
+             all crates must use egui-phosphor = \"0.13\""
+        );
+    }
 }

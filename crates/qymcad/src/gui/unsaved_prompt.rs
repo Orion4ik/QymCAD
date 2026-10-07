@@ -185,4 +185,24 @@ mod tests {
         }
         let _ = std::fs::remove_file(&path);
     }
+
+    /// Editing metadata or part colors marks the project dirty so unsaved work is not lost on close.
+    #[test]
+    fn metadata_and_color_edits_mark_the_project_dirty() {
+        let (_src, path) = saved_project("meta_dirty.qcad");
+        let mut app = App::default();
+        app.open_for_test(path.clone());
+        assert!(!qymcad_ui_state::is_dirty(&mut app.rebuild_ctx()), "setup: opened, and it is clean");
+
+        app.project.meta.title = "New Title".into();
+        assert!(qymcad_ui_state::is_dirty(&mut app.rebuild_ctx()), "changing title marks project dirty");
+
+        app.project.meta.title = String::new();
+        assert!(!qymcad_ui_state::is_dirty(&mut app.rebuild_ctx()), "reverting title restores clean state");
+
+        app.project.part_colors.insert(1, [100, 150, 200]);
+        assert!(qymcad_ui_state::is_dirty(&mut app.rebuild_ctx()), "assigning part colour marks project dirty");
+
+        let _ = std::fs::remove_file(&path);
+    }
 }

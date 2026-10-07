@@ -198,3 +198,126 @@ fn an_unneeded_object_does_not_refuse_the_drawing() {
     let got = import_dxf(&p).expect("the drawing is read, not refused for its styles");
     assert_eq!(got.curves.len(), 1, "the line of the drawing did not come in: {:?}", got.curves);
 }
+
+/// Mirrored arcs and entities using OCS extrusion direction (210/220/230) land at their correct WCS coordinates.
+#[test]
+fn ocs_extrusion_places_mirrored_arc_in_wcs() {
+    use qymcad_core::geom::ProfEdge;
+    let text = "\
+0
+SECTION
+2
+HEADER
+9
+$ACADVER
+1
+AC1009
+9
+$INSUNITS
+70
+4
+0
+ENDSEC
+0
+SECTION
+2
+ENTITIES
+0
+LINE
+8
+0
+10
+0.0
+20
+0.0
+30
+0.0
+11
+40.0
+21
+0.0
+31
+0.0
+0
+LINE
+8
+0
+10
+0.0
+20
+20.0
+30
+0.0
+11
+40.0
+21
+20.0
+31
+0.0
+0
+ARC
+8
+0
+10
+0.0
+20
+10.0
+30
+0.0
+40
+10.0
+50
+90.0
+51
+270.0
+0
+ARC
+8
+0
+10
+-40.0
+20
+10.0
+30
+0.0
+40
+10.0
+210
+0.0
+220
+0.0
+230
+-1.0
+50
+90.0
+51
+270.0
+0
+ENDSEC
+0
+EOF
+";
+    let p = written("slot_ocs.dxf");
+    std::fs::write(&p, text).expect("written");
+    let got = import_dxf(&p).expect("import ok");
+
+    assert_eq!(got.curves.len(), 4, "slot has 4 curves");
+
+    // The right arc must have WCS center (40, 10), start (40, 20), end (40, 0)
+    let right_arc = got.curves.iter().find(|c| match c {
+        ProfEdge::Arc { center, .. } => center.x > 20.0,
+        _ => false,
+    });
+    assert!(right_arc.is_some(), "right arc did not land on the right side of the slot (x > 20): {:?}", got.curves);
+
+    let Some(ProfEdge::Arc { a, b, center, ccw }) = right_arc else { panic!() };
+    assert!((center.x - 40.0).abs() < 1e-6 && (center.y - 10.0).abs() < 1e-6, "centre is (40, 10), got {:?}", center);
+    let pts = [(*a, *b), (*b, *a)];
+    assert!(
+        pts.iter().any(|(p1, p2)| (p1.x - 40.0).abs() < 1e-6 && (p1.y - 20.0).abs() < 1e-6 && (p2.x - 40.0).abs() < 1e-6 && (p2.y - 0.0).abs() < 1e-6),
+        "arc endpoints connect with the slot lines at (40, 20) and (40, 0), got a={:?}, b={:?}",
+        a,
+        b
+    );
+    assert!(!ccw, "mirrored arc in WCS is clockwise (from (40,20) through (50,10) to (40,0))");
+}

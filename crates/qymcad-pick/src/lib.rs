@@ -272,11 +272,10 @@ pub fn nearest_tangent_circle(project: &Project, si: usize, p1: Point2, p2: Poin
     best.map(|(_, v)| v)
 }
 
-/// The ends of an ADJACENT line (sharing an end with p1 or p2) whose length is about the length of the
-/// segment p1-p2 — for the automatic equal-length constraint. The requirement of adjacency plus a hard
-/// tolerance of 2% guard against false matches of length with distant unrelated geometry. The line's
-/// own ends (ea, eb) are excluded.
-pub fn nearest_equal_line(project: &Project, si: usize, p1: Point2, p2: Point2, ea: Id, eb: Id) -> Option<(Id, Id)> {
+/// The ends of an ADJACENT or HOVERED line whose length is about the length of the
+/// segment p1-p2 - for the automatic equal-length constraint. Distant non-adjacent lines are
+/// inferred only when explicitly hovered over while drawing.
+pub fn nearest_equal_line(project: &Project, si: usize, p1: Point2, p2: Point2, ea: Id, eb: Id, hover_line: Option<Id>) -> Option<(Id, Id)> {
     use qymcad_core::model::EntityKind;
     let s = project.sketches.get(si)?;
     let pt = |id: Id| s.points.iter().find(|q| q.id == id).map(|q| (q.x, q.y));
@@ -292,9 +291,10 @@ pub fn nearest_equal_line(project: &Project, si: usize, p1: Point2, p2: Point2, 
             continue;
         }
         let (Some((ax, ay)), Some((bx, by))) = (pt(a), pt(b)) else { continue };
-        // adjacency: an end shared with the new segment (by position, which works in the preview too)
+        // adjacency or explicitly hovered: distant lines are not matched without hover
         let adj = near(ax, ay, p1) || near(ax, ay, p2) || near(bx, by, p1) || near(bx, by, p2);
-        if !adj {
+        let hovered = hover_line == Some(e.id);
+        if !adj && !hovered {
             continue;
         }
         let le = ((bx - ax).powi(2) + (by - ay).powi(2)).sqrt();
@@ -309,9 +309,10 @@ pub fn nearest_equal_line(project: &Project, si: usize, p1: Point2, p2: Point2, 
     best.map(|(_, v)| v)
 }
 
-/// The ends of the nearest NON-axis line almost parallel to the segment p1-p2 (for the automatic
-/// parallel constraint).
-pub fn nearest_parallel_line(project: &Project, si: usize, p1: Point2, p2: Point2, ea: Id, eb: Id) -> Option<(Id, Id)> {
+/// The ends of the hovered line almost parallel to the segment p1-p2 (for the automatic
+/// parallel constraint). Distant lines of another shape are never tied without being hovered.
+pub fn nearest_parallel_line(project: &Project, si: usize, p1: Point2, p2: Point2, ea: Id, eb: Id, hover_line: Option<Id>) -> Option<(Id, Id)> {
+    let hid = hover_line?;
     use qymcad_core::model::EntityKind;
     let s = project.sketches.get(si)?;
     let pt = |id: Id| s.points.iter().find(|q| q.id == id).map(|q| Point2::new(q.x, q.y));
@@ -320,26 +321,25 @@ pub fn nearest_parallel_line(project: &Project, si: usize, p1: Point2, p2: Point
     if lv < 1e-6 {
         return None;
     }
-    let mut best: Option<(f64, (Id, Id))> = None;
-    for e in &s.entities {
-        let EntityKind::Line { a, b } = e.kind else { continue };
-        if (a == ea && b == eb) || (a == eb && b == ea) {
-            continue;
-        }
-        let (Some(pa), Some(pb)) = (pt(a), pt(b)) else { continue };
-        let (ux, uy) = (pb.x - pa.x, pb.y - pa.y);
-        let lu = (ux * ux + uy * uy).sqrt();
-        if lu < 1e-6 {
-            continue;
-        }
-        // non-axis (otherwise the horizontal or vertical constraint fires) and almost parallel
-        let axis = (ux.abs() <= uy.abs() * 0.06) || (uy.abs() <= ux.abs() * 0.06);
-        let cross = (ux * vy - uy * vx).abs() / (lu * lv);
-        if !axis && cross < 0.06 && best.is_none_or(|(bc, _)| cross < bc) {
-            best = Some((cross, (a, b)));
-        }
+    let e = s.entities.iter().find(|e| e.id == hid)?;
+    let EntityKind::Line { a, b } = e.kind else { return None };
+    if (a == ea && b == eb) || (a == eb && b == ea) {
+        return None;
     }
-    best.map(|(_, e)| e)
+    let (Some(pa), Some(pb)) = (pt(a), pt(b)) else { return None };
+    let (ux, uy) = (pb.x - pa.x, pb.y - pa.y);
+    let lu = (ux * ux + uy * uy).sqrt();
+    if lu < 1e-6 {
+        return None;
+    }
+    // non-axis (otherwise the horizontal or vertical constraint fires) and almost parallel
+    let axis = (ux.abs() <= uy.abs() * 0.06) || (uy.abs() <= ux.abs() * 0.06);
+    let cross = (ux * vy - uy * vx).abs() / (lu * lv);
+    if !axis && cross < 0.06 {
+        Some((a, b))
+    } else {
+        None
+    }
 }
 
 /// DOES THE SCREEN BOUNDING BOX OF A BODY CONTAIN THE CURSOR? A cheap cull before the expensive walk
@@ -1320,7 +1320,7 @@ pub fn shade_tri(pal: &qymcad_scheme::Palette, ghost_alpha: u8, hot: bool, ghost
 
 /// The candidate automatic constraints for the segment p1 -> p2 being drawn — for a live preview
 /// while drawing. Returns (glyph, the world point for the badge). Geometry only, nothing applied.
-pub fn infer_hints(dc: &DrawCtx, si: usize, prev: Option<Point2>, p1: Point2, p2: Point2) -> Vec<(Gly, Point2)> {
+pub fn infer_hints(dc: &DrawCtx, si: usize, prev: Option<Point2>, p1: Point2, p2: Point2, hover_line: Option<Id>) -> Vec<(Gly, Point2)> {
     let mut out: Vec<(Gly, Point2)> = Vec::new();
     let (dx, dy) = ((p2.x - p1.x).abs(), (p2.y - p1.y).abs());
     let mid = Point2::new((p1.x + p2.x) / 2.0, (p1.y + p2.y) / 2.0);
@@ -1344,7 +1344,7 @@ pub fn infer_hints(dc: &DrawCtx, si: usize, prev: Option<Point2>, p1: Point2, p2
             }
         }
         // parallel to the nearest non-axis line
-        if nearest_parallel_line(dc.project, si, p1, p2, 0, 0).is_some() {
+        if nearest_parallel_line(dc.project, si, p1, p2, 0, 0, hover_line).is_some() {
             out.push((Gly::Parallel, mid));
         }
     }
@@ -1353,7 +1353,7 @@ pub fn infer_hints(dc: &DrawCtx, si: usize, prev: Option<Point2>, p1: Point2, p2
         out.push((Gly::Tangent, mid));
     }
     // equal in length to the nearest line
-    if nearest_equal_line(dc.project, si, p1, p2, 0, 0).is_some() {
+    if nearest_equal_line(dc.project, si, p1, p2, 0, 0, hover_line).is_some() {
         out.push((Gly::Equal, p2));
     }
     // an end coinciding with a vertex, or a point on an edge, is shown by the shared snap hint (`snap_infer_glyph`)

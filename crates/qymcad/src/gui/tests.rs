@@ -2553,4 +2553,57 @@ mod sketch_plane_pick_frames_tests {
         }
         assert_eq!(regens, 1, "and no new rebuilds follow - the cycle does not come back");
     }
+
+    /// Status line on entering the starter sketch must show the localised sketch name,
+    /// never the raw catalogue key "name-sketch-n#1".
+    #[test]
+    fn sketch_entry_status_localises_starter_sketch_name() {
+        let mut app = App::default();
+        app.project.cube_sample();
+        let s = &app.project.sketches[0];
+        let status = super::sketch_entry_status(&app.project, s);
+        assert!(!status.contains("name-sketch-n"), "status leaked raw key: {status}");
+        assert!(!status.contains('#'), "status leaked unparsed hash argument: {status}");
+        assert!(status.contains(&qymcad_i18n::name(&s.name)), "status must contain translated sketch name: {status}");
+    }
+
+    /// The autosave timestamp in the status line must match the local wall clock,
+    /// not UTC.
+    #[test]
+    fn autosave_clock_shows_local_time_not_utc() {
+        let local = time::OffsetDateTime::now_local().expect("local offset must be obtainable");
+        let expected = format!("{:02}:{:02}", local.hour(), local.minute());
+        assert_eq!(super::clock_hh_mm(), expected, "autosave clock should match local wall clock");
+    }
+
+    /// When geometry is selected, pressing X turns the selected geometry into construction geometry
+    /// (or back) and leaves the drawing mode toggle untouched.
+    /// When nothing is selected, pressing X switches the drawing mode toggle.
+    #[test]
+    fn construction_key_x_with_selection_toggles_selection_without_switching_drawing_mode() {
+        let mut app = App::default();
+        let si = app.create_sketch_on(qymcad_core::feature::SketchPlane::default());
+        app.project.add_line_entity(si, 0.0, 0.0, 10.0, 0.0, qymcad_core::feature::Purpose::Real);
+        app.project.add_line_entity(si, 10.0, 0.0, 10.0, 10.0, qymcad_core::feature::Purpose::Real);
+        app.project.regen_sketch(si);
+        app.chosen.sel = Sel::Sketch(si);
+
+        // Click on the first line (midpoint at 5, 0) to select it:
+        super::hand::Hand::canvas(&mut app).click2d(5.0, 0.0);
+        assert!(!app.tools.sel_sk.items.is_empty(), "line 0 must be selected by clicking on it: {:?}", app.tools.sel_sk.items);
+
+        assert!(!app.tools.tool.construction, "setup: drawing mode is initially normal");
+        assert!(!app.project.sketches[si].entities[0].construction, "setup: line 0 is normal");
+
+        super::hand::Hand::canvas(&mut app).key(egui::Key::X);
+
+        assert!(app.project.sketches[si].entities[0].construction, "selected line must become construction");
+        assert!(!app.project.sketches[si].entities[1].construction, "unselected line must stay normal");
+        assert!(!app.tools.tool.construction, "drawing mode toggle must not be switched when geometry was selected");
+
+        // With nothing selected, pressing X switches the drawing mode:
+        app.tools.sel_sk.items.clear();
+        super::hand::Hand::canvas(&mut app).key(egui::Key::X);
+        assert!(app.tools.tool.construction, "with nothing selected, X switches drawing mode to construction");
+    }
 }

@@ -991,6 +991,7 @@ impl App {
             chamfer: self.params.chamfer,
             edges: &self.edges,
             face_arrow_drag: self.dragged.face_arrow_drag,
+            edge_handle_drag: self.dragged.edge_handle_drag,
             feat: self.feat,
             gpu_ok: self.gpu_ok,
             gsel: &self.tools.gsel,
@@ -1163,9 +1164,11 @@ impl App {
 impl Default for App {
     fn default() -> Self {
         let mut project = Project::default();
+        let set = Settings::default();
+        project.auto_constrain = set.auto_constrain;
         project.new_document(); // the root assembly plus an active empty first Part right from the start
         let mut app = Self {
-            set: Settings::default(),
+            set,
             cmd_failed: false,
             snap_hint: None,
             cache: Caches::default(),
@@ -2593,9 +2596,9 @@ fn section_drag_delta_offset(off0: f64, p0: Pos2, s0: Pos2, s1: Pos2, cur: Pos2)
     Some(off0 + dt)
 }
 
-/// "hh:mm" for the autosave line. UTC on purpose: it says "just now", it is not a wall clock.
-fn clock_hh_mm() -> String {
-    let t = time::OffsetDateTime::from_unix_timestamp(unix_secs() as i64).unwrap_or(time::OffsetDateTime::UNIX_EPOCH);
+/// "hh:mm" for the autosave line in local wall-clock time.
+pub(crate) fn clock_hh_mm() -> String {
+    let t = time::OffsetDateTime::now_local().unwrap_or_else(|_| time::OffsetDateTime::from_unix_timestamp(unix_secs() as i64).unwrap_or(time::OffsetDateTime::UNIX_EPOCH));
     format!("{:02}:{:02}", t.hour(), t.minute())
 }
 
@@ -3693,7 +3696,7 @@ pub(crate) fn sketch_entry_status(project: &Project, s: &qymcad_core::model::Ske
             return crate::i18n::tr1("g-sketch-on-foreign-face", "name", &src);
         }
     }
-    crate::i18n::tr1("g-editing-sketch", "name", &s.name)
+    crate::i18n::tr1("g-editing-sketch", "name", &crate::i18n::name(&s.name))
 }
 
 /// Resolve the PLACEMENT plane (a shared step for a new sketch AND for an import).
@@ -3919,6 +3922,11 @@ mod a_cut_corner_draws_clean;
 mod the_dimensions_of_a_cut_corner_stand_outside;
 mod a_corner_set_takes_its_size_whole;
 mod a_drag_takes_what_was_pressed;
+mod centre_drag_moves_shape_as_a_whole;
+mod linear_dimension_placement_does_not_stick;
+mod the_dimensions_of_a_rectangle_go_with_it_when_turned;
+mod rectangle_broken_leaves_auto_constraints;
+mod auto_constraints_do_not_tie_distant_lines;
 mod text_font;
 mod font_row_look;
 mod paths_are_one;
@@ -3943,6 +3951,7 @@ mod what_the_program_opens_with;
 mod contours_are_chosen_before_the_size;
 mod a_tool_that_needs_a_sketch_asks_for_one;
 mod the_sketch_mirror_asks_about_what;
+mod sketch_pattern_fields_have_captions;
 mod which_button_moves_the_view;
 mod hints_are_readable;
 mod renaming_starts_with_f2;
@@ -4062,6 +4071,7 @@ mod push_face_flow;
 mod split_flow;
 mod templates_flow;
 mod fillet_vertex_flow;
+mod edge_radius_handle_flow;
 mod thicken_flow;
 mod loft_surface_flow;
 mod patch_flow;

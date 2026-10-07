@@ -30,13 +30,18 @@ import argparse
 import hashlib
 import json
 import os
+import shutil
 import subprocess
 import sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 LIST = os.path.join(ROOT, "tools", "breakages.json")
 RESULTS = os.path.join(ROOT, "target", "breakages.jsonl")
-CAP = ["systemd-run", "--user", "--scope", "-q", "-p", "MemoryMax=16G", "-p", "MemorySwapMax=0"]
+CAP = (
+    []
+    if os.environ.get("CI") or sys.platform != "linux" or not shutil.which("systemd-run")
+    else ["systemd-run", "--user", "--scope", "-q", "-p", "MemoryMax=16G", "-p", "MemorySwapMax=0"]
+)
 
 
 def run_probe(probe):

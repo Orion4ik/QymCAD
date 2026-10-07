@@ -863,6 +863,9 @@ pub struct SketchTool {
     /// letters of the string were taken out because the font cannot write them: a click on the empty string names
     /// the font rather than blaming the string
     pub text_refused: bool,
+    /// An existing line hovered over while drawing, so that auto-constraints (Parallel, Equal)
+    /// reference only lines the person intentionally touched with the cursor.
+    pub hover_line: Option<qymcad_core::model::Id>,
 }
 
 impl SketchTool {
@@ -872,6 +875,7 @@ impl SketchTool {
     pub fn select(&mut self, armed: &mut Armed, kind: u8) {
         *armed = if armed.draw_kind() == kind { Armed::None } else { Armed::Draw(kind) };
         self.pts.clear();
+        self.hover_line = None;
     }
 }
 
@@ -5113,6 +5117,7 @@ pub struct Painting<'a> {
     pub chamfer: ChamferParams,
     pub edges: &'a EdgeCache,
     pub face_arrow_drag: Option<f64>,
+    pub edge_handle_drag: Option<f64>,
     pub feat: FeatTarget,
     pub gpu_ok: bool,
     pub gsel: &'a GeomSelection,
@@ -6502,6 +6507,9 @@ pub fn pan_sheet_2d(view: &mut View2d, ctx: &egui::Context, resp: &egui::Respons
     if zoom_latched(ctx) {
         return; // the middle button zooms while the latch is on
     }
+    if resp.dragged_by(egui::PointerButton::Primary) && !Gesture::chord_held(ctx) {
+        return; // the left button alone is the sketch's own (drawing, picking, rubber-band select)
+    }
     let by_layout = nav.pans().iter().any(|g| g.sheet_may_take() && g.active(ctx, resp));
     let ours = nav == MouseNav::QymCad && ctx.input(|i| i.pointer.middle_down());
     if !ours && !by_layout {
@@ -7039,6 +7047,8 @@ pub struct Dragged {
     pub rollback: RollbackDrag,
     /// The arrow on a face being dragged: how far it has travelled.
     pub face_arrow_drag: Option<f64>,
+    /// An edge radius/chamfer handle being dragged: the initial value.
+    pub edge_handle_drag: Option<f64>,
     /// Pulling a part by a degree of freedom: which one, from where, in which direction.
     pub part_pull: Option<(Id, [f64; 3], [f64; 3])>,
 }
@@ -9159,6 +9169,136 @@ pub fn face_arrow_geometry(pn: &Painting) -> Option<([f64; 3], [f64; 3], [f64; 3
         .unwrap_or(5.0);
     let l = if d.abs() > 1e-6 { d } else { span };
     Some((o, [o[0] + n[0] * l, o[1] + n[1] * l, o[2] + n[2] * l], n))
+}
+
+/// The geometry of an edge radius/chamfer gizmo: midpoint of the edge, normal vector,
+/// binormal vector, edge tangent, current radius value, handle tip position, and parameter key.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct EdgeRadiusGizmo {
+    pub origin: [f64; 3],
+    pub normal: [f64; 3],
+    pub binormal: [f64; 3],
+    pub tangent: [f64; 3],
+    pub radius: f64,
+    pub tip: [f64; 3],
+    pub param_key: &'static str,
+}
+
+pub fn edge_radius_geometry(pn: &Painting) -> Option<EdgeRadiusGizmo> {
+    let param_key = match pn.armed.cmd_kind() {
+        4 => "radius",
+        5 => "dist",
+        _ => return None,
+    };
+    if pn.gsel.edges.is_empty() {
+        return None;
+    }
+    let body = pn.edges.body?;
+    let target_edge_id = pn
+        .gsel
+        .last_edge
+        .and_then(|(e, b)| if b == body && pn.gsel.edges.contains(&e) { Some(e) } else { None })
+        .or_else(|| pn.edges.ids.iter().copied().find(|id| *id != 0 && pn.gsel.edges.contains(id)))?;
+
+    let idx = pn.edges.ids.iter().position(|&id| id == target_edge_id)?;
+    let poly = pn.edges.polys.get(idx)?;
+    if poly.len() < 2 {
+        return None;
+    }
+
+    let m = poly.len() / 2;
+    let (p0, p1) = if poly.len() == 2 {
+        (poly[0], poly[1])
+    } else {
+        (poly[m - 1], poly[m])
+    };
+    let mid_loc = [
+        (p0[0] as f64 + p1[0] as f64) * 0.5,
+        (p0[1] as f64 + p1[1] as f64) * 0.5,
+        (p0[2] as f64 + p1[2] as f64) * 0.5,
+    ];
+    let tan_loc = v_sub(
+        [p1[0] as f64, p1[1] as f64, p1[2] as f64],
+        [p0[0] as f64, p0[1] as f64, p0[2] as f64],
+    );
+
+    let wt = pn.project.body_display_transform(body, current_ctx_id(pn.active_path, pn.project));
+    let origin = qymcad_core::feature::apply12(&wt, mid_loc);
+    let tan_w = v_norm(qymcad_core::feature::apply12_dir(&wt, tan_loc));
+
+    let basis = pn.cam.basis();
+    let fwd = basis.2;
+    let n0 = v_cross(tan_w, fwd);
+    let normal = if v_dot(n0, n0) > 0.01 {
+        v_norm(n0)
+    } else {
+        let dot_up = v_dot(basis.1, tan_w);
+        let n1 = v_sub(basis.1, [tan_w[0] * dot_up, tan_w[1] * dot_up, tan_w[2] * dot_up]);
+        if v_dot(n1, n1) > 0.01 {
+            v_norm(n1)
+        } else {
+            let dot_rt = v_dot(basis.0, tan_w);
+            v_norm(v_sub(basis.0, [tan_w[0] * dot_rt, tan_w[1] * dot_rt, tan_w[2] * dot_rt]))
+        }
+    };
+    let binormal = v_cross(tan_w, normal);
+
+    let val = cmd_val(pn.cmd, param_key);
+    let disp_r = if val > 0.05 { val } else { 2.0 };
+    let tip = [
+        origin[0] + normal[0] * disp_r,
+        origin[1] + normal[1] * disp_r,
+        origin[2] + normal[2] * disp_r,
+    ];
+
+    Some(EdgeRadiusGizmo {
+        origin,
+        normal,
+        binormal,
+        tangent: tan_w,
+        radius: val,
+        tip,
+        param_key,
+    })
+}
+
+pub fn edge_handle_hit(
+    pn: &Painting,
+    rect: Rect,
+    pos: Pos2,
+    basis: &([f64; 3], [f64; 3], [f64; 3]),
+) -> bool {
+    let Some(gizmo) = edge_radius_geometry(pn) else { return false };
+    let scr = Screen { cam: &pn.cam, set: pn.set, rect, basis };
+    let (s_origin, s_tip) = (scr.at(gizmo.origin).0, scr.at(gizmo.tip).0);
+    s_tip.distance(pos) <= 14.0 || screen_dist_seg(pos, s_origin, s_tip) <= 8.0
+}
+
+pub fn edge_radius_drag_to(
+    gizmo: EdgeRadiusGizmo,
+    scr: &Screen,
+    cmd: &mut FeatCommand,
+    regen: &mut Rebuilding,
+    d: egui::Vec2,
+) {
+    let s0 = scr.at(gizmo.origin).0;
+    let s1 = scr.at([
+        gizmo.origin[0] + gizmo.normal[0] * 10.0,
+        gizmo.origin[1] + gizmo.normal[1] * 10.0,
+        gizmo.origin[2] + gizmo.normal[2] * 10.0,
+    ]).0;
+    let pd = s1 - s0;
+    let denom = (pd.x * pd.x + pd.y * pd.y) as f64;
+    if denom < 1e-6 {
+        return;
+    }
+    let inc = (d.x * pd.x + d.y * pd.y) as f64 * 10.0 / denom;
+    let cur = (cmd_val(cmd, gizmo.param_key) + inc).max(0.05);
+    if let Some(p) = cmd.params.iter_mut().find(|p| p.key == gizmo.param_key) {
+        p.val = cur;
+        p.txt = format!("{:.2}", cur);
+    }
+    invalidate(regen);
 }
 
 /// The geometry of the section GIZMO: the centre of the quad on the plane, u, v, the half-size, and the arrow's tip.
@@ -12058,6 +12198,7 @@ pub fn installed_fonts_in(dirs: &[std::path::PathBuf]) -> Vec<FontFace> {
     let mut stack: Vec<std::path::PathBuf> = dirs.to_vec();
     let mut seen_dirs: std::collections::HashSet<std::path::PathBuf> = std::collections::HashSet::new();
     let mut same: std::collections::HashSet<(String, String, u32, usize)> = std::collections::HashSet::new();
+    let mut can_write_set: std::collections::HashSet<(String, u32)> = std::collections::HashSet::new();
     while let Some(dir) = stack.pop() {
         // A font tree is full of symlinks; the same directory reached twice would list the same faces twice.
         let key = std::fs::canonicalize(&dir).unwrap_or(dir.clone());
@@ -12078,6 +12219,12 @@ pub fn installed_fonts_in(dirs: &[std::path::PathBuf]) -> Vec<FontFace> {
             let Ok(bytes) = std::fs::read(&path) else { continue };
             for index in 0..qymcad_core::text::faces_in(&bytes) {
                 if let Some((family, style)) = qymcad_core::text::face_name(&bytes, index) {
+                    if family.starts_with('.') || family.is_empty() {
+                        continue;
+                    }
+                    if qymcad_core::text::can_write(&bytes, index, &format!("{family} {style}")) {
+                        can_write_set.insert((path.to_string_lossy().into_owned(), index));
+                    }
                     // THE SAME FONT IN TWO FOLDERS IS ONE ROW. Measured on a real machine: 254 faces held
                     // thirteen pairs saying exactly the same thing - one `.ttc` lying in three font folders
                     // at once, and a family copied into a folder inside its own. Real copies, not symlinks,
@@ -12091,7 +12238,8 @@ pub fn installed_fonts_in(dirs: &[std::path::PathBuf]) -> Vec<FontFace> {
             }
         }
     }
-    out.sort_by_key(|a| (a.family.to_lowercase(), a.style.to_lowercase()));
+    // Faces that can write their own name come first, followed by unreadable ones.
+    out.sort_by_key(|a| (!can_write_set.contains(&(a.path.clone(), a.index)), a.family.to_lowercase(), a.style.to_lowercase()));
     // NAMESAKES ARE GIVEN THEIR FILE NAME. Only namesakes: putting the file beside every row would drown the
     // name a person is actually looking for.
     let mut namesakes: std::collections::HashMap<(String, String), usize> = std::collections::HashMap::new();
@@ -13427,6 +13575,7 @@ pub fn release_armed_sketch_tool(t: &mut Tools) -> Option<&'static str> {
         _ => return None,
     };
     tool.pts.clear();
+    tool.hover_line = None;
     *armed = Armed::None;
     Some(msg.unwrap_or("in-tool-released"))
 }

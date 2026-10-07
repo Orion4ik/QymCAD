@@ -161,25 +161,41 @@ pub fn metric_coarse_pitch(d: f64) -> f64 {
     const TABLE: &[(f64, f64)] = &[
         (1.0, 0.25),
         (1.2, 0.25),
+        (1.4, 0.3),
         (1.6, 0.35),
+        (1.8, 0.35),
         (2.0, 0.4),
+        (2.2, 0.45),
         (2.5, 0.45),
         (3.0, 0.5),
+        (3.5, 0.6),
         (4.0, 0.7),
+        (4.5, 0.75),
         (5.0, 0.8),
         (6.0, 1.0),
+        (7.0, 1.0),
         (8.0, 1.25),
         (10.0, 1.5),
         (12.0, 1.75),
+        (14.0, 2.0),
         (16.0, 2.0),
+        (18.0, 2.5),
         (20.0, 2.5),
+        (22.0, 2.5),
         (24.0, 3.0),
+        (27.0, 3.0),
         (30.0, 3.5),
+        (33.0, 3.5),
         (36.0, 4.0),
+        (39.0, 4.0),
         (42.0, 4.5),
+        (45.0, 4.5),
         (48.0, 5.0),
+        (52.0, 5.0),
         (56.0, 5.5),
+        (60.0, 5.5),
         (64.0, 6.0),
+        (68.0, 6.0),
     ];
     let mut best = TABLE[0];
     for &(dd, p) in TABLE {
@@ -190,9 +206,39 @@ pub fn metric_coarse_pitch(d: f64) -> f64 {
     best.1
 }
 
-/// The standard pitch of a trapezoidal Tr thread (ISO 2901, coarse series).
+/// The standard pitch of a trapezoidal Tr thread (ISO 2901 / ISO 2904, coarse series).
 pub fn tr_coarse_pitch(d: f64) -> f64 {
-    const TABLE: &[(f64, f64)] = &[(8.0, 1.5), (10.0, 2.0), (12.0, 3.0), (16.0, 4.0), (20.0, 4.0), (24.0, 5.0), (28.0, 5.0), (32.0, 6.0), (40.0, 7.0), (48.0, 8.0), (60.0, 9.0), (80.0, 10.0)];
+    const TABLE: &[(f64, f64)] = &[
+        (8.0, 1.5),
+        (10.0, 2.0),
+        (12.0, 3.0),
+        (14.0, 3.0),
+        (16.0, 4.0),
+        (18.0, 4.0),
+        (20.0, 4.0),
+        (22.0, 5.0),
+        (24.0, 5.0),
+        (26.0, 5.0),
+        (28.0, 5.0),
+        (30.0, 6.0),
+        (32.0, 6.0),
+        (34.0, 6.0),
+        (36.0, 6.0),
+        (38.0, 7.0),
+        (40.0, 7.0),
+        (42.0, 7.0),
+        (44.0, 7.0),
+        (46.0, 8.0),
+        (48.0, 8.0),
+        (50.0, 8.0),
+        (52.0, 8.0),
+        (55.0, 9.0),
+        (60.0, 9.0),
+        (65.0, 10.0),
+        (70.0, 10.0),
+        (75.0, 10.0),
+        (80.0, 10.0),
+    ];
     let mut best = TABLE[0];
     for &(dd, p) in TABLE {
         if d + 1e-9 >= dd {
@@ -422,7 +468,6 @@ impl ThreadSpec {
     /// continued the flanks outwards, and a half-width of 1.834 at a pitch of 3.5 reached into the neighbouring
     /// turn. The overshoot now runs strictly vertically, which does not affect the cut, being entirely outside
     /// the material, and rules the overlap out.
-    #[allow(clippy::too_many_arguments)]
     fn groove_profile(&self, p: f64, shape: GrooveShape) -> Vec<ProfEdge> {
         let GrooveShape { depth, angle_deg, crest_flat, crest_r, root_r, fit } = shape;
         let beta = (angle_deg.to_radians() * 0.5).clamp(1e-3, 1.3); // half-angle of the profile from the radial

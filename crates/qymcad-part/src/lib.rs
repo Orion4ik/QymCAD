@@ -1190,10 +1190,20 @@ pub fn start_body_cmd(pc: &mut qymcad_ui_state::PartCtx, cmd: u8) {
     }
     pc.cmd.open(pc.armed, cmd, *pc.mode_3d); // a clean slate, then open
                                              // a new feature, not an edit
-    *pc.mode_3d = true;
+    let preselected_edge = match *pc.sel {
+        qymcad_ui_state::Sel::Edge(b, eid) => Some((b, eid)),
+        _ => None,
+    };
     pc.gsel.edges.clear();
     pc.gsel.faces.clear(); // a shell picks faces from scratch
     pc.gsel.faces_body = None; // the scope of the multiple face selection
+    if let Some((b, eid)) = preselected_edge {
+        if matches!(cmd, 4 | 5) {
+            pc.gsel.edges.insert(eid);
+            pc.gsel.last_edge = Some((eid, b));
+            refresh_edges(pc);
+        }
+    }
     pc.opts.shell_side = qymcad_core::feature::ShellSide::Inward; // a shell goes INWARDS by default
     pc.chamfer.mode = qymcad_core::feature::ChamferMode::Symmetric; // a chamfer is symmetric by default
     pc.chamfer.flip = false;
@@ -1801,10 +1811,17 @@ pub fn start_push_face_cmd(pc: &mut qymcad_ui_state::PartCtx) {
     }
     pc.cmd.open(pc.armed, 25, *pc.mode_3d);
     qymcad_ui_state::borrow_view(*pc.cam, *pc.mode_3d, *pc.view, pc.view_restore); // the view is borrowed and returned on exit
-    *pc.mode_3d = true;
+    let preselected_face = match *pc.sel {
+        qymcad_ui_state::Sel::Face(mi, fi) => pc.project.mesh_id(mi).zip(pc.project.bodies.get(mi).and_then(|b| b.faces.get(fi)).map(|f| f.id)),
+        _ => None,
+    };
     pc.gsel.edges.clear();
-    pc.gsel.faces.clear(); // the face is picked afresh: a pre-selection would only confuse here
+    pc.gsel.faces.clear();
     pc.gsel.faces_body = None;
+    if let Some((b, fi)) = preselected_face {
+        pc.gsel.faces.insert(fi);
+        pc.gsel.faces_body = Some(b);
+    }
     pc.cmd.params = vec![qymcad_ui_state::CmdParam::new("f-offset2", "dist", 5.0, -100000.0, 100000.0).nonzero()];
     *pc.status = qymcad_i18n::tr("msg-push-face");
 }
@@ -6594,19 +6611,21 @@ pub fn tool_options_bar(bc: &mut qymcad_ui_state::BarCtx, ui: &mut egui::Ui) {
                 qymcad_ui_state::NumFormat { lo: 2.0, hi: 200.0, integer: true, suffix: "", nonzero: false },
             ) as u32;
             if bc.armed.pat_op() == 1 {
+                ui.label(qymcad_i18n::tr("opt-dx"));
                 bc.sk_pat.dx = qymcad_ui_state::num_or_expr(
                     &mut qymcad_ui_state::ExprBarCtx { bar_exprs: &mut *bc.bar_exprs, project: &*bc.project, scheme: &*bc.scheme },
                     ui,
                     "skpat_dx",
                     bc.sk_pat.dx,
-                    qymcad_ui_state::NumFormat { lo: -100000.0, hi: 100000.0, integer: false, suffix: "", nonzero: false },
+                    qymcad_ui_state::NumFormat { lo: -100000.0, hi: 100000.0, integer: false, suffix: &qymcad_i18n::tr("unit-mm-suffix"), nonzero: false },
                 );
+                ui.label(qymcad_i18n::tr("opt-dy"));
                 bc.sk_pat.dy = qymcad_ui_state::num_or_expr(
                     &mut qymcad_ui_state::ExprBarCtx { bar_exprs: &mut *bc.bar_exprs, project: &*bc.project, scheme: &*bc.scheme },
                     ui,
                     "skpat_dy",
                     bc.sk_pat.dy,
-                    qymcad_ui_state::NumFormat { lo: -100000.0, hi: 100000.0, integer: false, suffix: "", nonzero: false },
+                    qymcad_ui_state::NumFormat { lo: -100000.0, hi: 100000.0, integer: false, suffix: &qymcad_i18n::tr("unit-mm-suffix"), nonzero: false },
                 );
                 ui.separator();
                 ui.label(qymcad_i18n::tr("opt-rows"));
@@ -6618,28 +6637,31 @@ pub fn tool_options_bar(bc: &mut qymcad_ui_state::BarCtx, ui: &mut egui::Ui) {
                     qymcad_ui_state::NumFormat { lo: 1.0, hi: 200.0, integer: true, suffix: "", nonzero: false },
                 ) as u32;
                 if bc.sk_pat.count2 > 1 {
+                    ui.label(qymcad_i18n::tr("opt-dx2"));
                     bc.sk_pat.dx2 = qymcad_ui_state::num_or_expr(
                         &mut qymcad_ui_state::ExprBarCtx { bar_exprs: &mut *bc.bar_exprs, project: &*bc.project, scheme: &*bc.scheme },
                         ui,
                         "skpat_dx2",
                         bc.sk_pat.dx2,
-                        qymcad_ui_state::NumFormat { lo: -100000.0, hi: 100000.0, integer: false, suffix: "", nonzero: false },
+                        qymcad_ui_state::NumFormat { lo: -100000.0, hi: 100000.0, integer: false, suffix: &qymcad_i18n::tr("unit-mm-suffix"), nonzero: false },
                     );
+                    ui.label(qymcad_i18n::tr("opt-dy2"));
                     bc.sk_pat.dy2 = qymcad_ui_state::num_or_expr(
                         &mut qymcad_ui_state::ExprBarCtx { bar_exprs: &mut *bc.bar_exprs, project: &*bc.project, scheme: &*bc.scheme },
                         ui,
                         "skpat_dy2",
                         bc.sk_pat.dy2,
-                        qymcad_ui_state::NumFormat { lo: -100000.0, hi: 100000.0, integer: false, suffix: "", nonzero: false },
+                        qymcad_ui_state::NumFormat { lo: -100000.0, hi: 100000.0, integer: false, suffix: &qymcad_i18n::tr("unit-mm-suffix"), nonzero: false },
                     );
                 }
             } else {
+                ui.label(qymcad_i18n::tr("opt-angle"));
                 bc.sk_pat.angle = qymcad_ui_state::num_or_expr(
                     &mut qymcad_ui_state::ExprBarCtx { bar_exprs: &mut *bc.bar_exprs, project: &*bc.project, scheme: &*bc.scheme },
                     ui,
                     "skpat_angle",
                     bc.sk_pat.angle,
-                    qymcad_ui_state::NumFormat { lo: -360.0, hi: 360.0, integer: false, suffix: "°", nonzero: false },
+                    qymcad_ui_state::NumFormat { lo: -360.0, hi: 360.0, integer: false, suffix: &qymcad_i18n::tr("unit-deg-suffix"), nonzero: false },
                 );
                 ui.label(egui::RichText::new(if bc.pat.center.is_some() { qymcad_i18n::tr("opt-centre-set") } else { qymcad_i18n::tr("opt-click-rotation-centre") }).weak());
             }
@@ -6696,19 +6718,21 @@ pub fn tool_options_bar(bc: &mut qymcad_ui_state::BarCtx, ui: &mut egui::Ui) {
                         bc.sk_pat.count as f64,
                         qymcad_ui_state::NumFormat { lo: 2.0, hi: 200.0, integer: true, suffix: "", nonzero: false },
                     ) as u32;
+                    ui.label(qymcad_i18n::tr("opt-dx"));
                     bc.sk_pat.dx = qymcad_ui_state::num_or_expr(
                         &mut qymcad_ui_state::ExprBarCtx { bar_exprs: &mut *bc.bar_exprs, project: &*bc.project, scheme: &*bc.scheme },
                         ui,
                         "skpat_dx",
                         bc.sk_pat.dx,
-                        qymcad_ui_state::NumFormat { lo: -100000.0, hi: 100000.0, integer: false, suffix: "", nonzero: false },
+                        qymcad_ui_state::NumFormat { lo: -100000.0, hi: 100000.0, integer: false, suffix: &qymcad_i18n::tr("unit-mm-suffix"), nonzero: false },
                     );
+                    ui.label(qymcad_i18n::tr("opt-dy"));
                     bc.sk_pat.dy = qymcad_ui_state::num_or_expr(
                         &mut qymcad_ui_state::ExprBarCtx { bar_exprs: &mut *bc.bar_exprs, project: &*bc.project, scheme: &*bc.scheme },
                         ui,
                         "skpat_dy",
                         bc.sk_pat.dy,
-                        qymcad_ui_state::NumFormat { lo: -100000.0, hi: 100000.0, integer: false, suffix: "", nonzero: false },
+                        qymcad_ui_state::NumFormat { lo: -100000.0, hi: 100000.0, integer: false, suffix: &qymcad_i18n::tr("unit-mm-suffix"), nonzero: false },
                     );
                 }
                 Some(qymcad_ui_state::EditTool::CircularPattern) => {
@@ -6720,12 +6744,13 @@ pub fn tool_options_bar(bc: &mut qymcad_ui_state::BarCtx, ui: &mut egui::Ui) {
                         bc.sk_pat.count as f64,
                         qymcad_ui_state::NumFormat { lo: 2.0, hi: 200.0, integer: true, suffix: "", nonzero: false },
                     ) as u32;
+                    ui.label(qymcad_i18n::tr("opt-angle"));
                     bc.sk_pat.angle = qymcad_ui_state::num_or_expr(
                         &mut qymcad_ui_state::ExprBarCtx { bar_exprs: &mut *bc.bar_exprs, project: &*bc.project, scheme: &*bc.scheme },
                         ui,
                         "skpat_angle",
                         bc.sk_pat.angle,
-                        qymcad_ui_state::NumFormat { lo: -360.0, hi: 360.0, integer: false, suffix: "°", nonzero: false },
+                        qymcad_ui_state::NumFormat { lo: -360.0, hi: 360.0, integer: false, suffix: &qymcad_i18n::tr("unit-deg-suffix"), nonzero: false },
                     );
                 }
                 Some(qymcad_ui_state::EditTool::Mirror) => {

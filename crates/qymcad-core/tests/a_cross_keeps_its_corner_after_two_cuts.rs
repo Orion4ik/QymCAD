@@ -50,7 +50,7 @@ fn two_cuts_on_a_cross_keep_every_line_on_its_corner(cut: Cut) {
         };
         assert!(done, "{cut:?}: the corner {pair:?} is cut");
     }
-    p.solve_sketch_drag(si, Some((middle, 5.0, 4.0)));
+    p.solve_sketch_drag(si, Some(qymcad_core::solver::DragPull2d::new(middle, 5.0, 4.0)));
     p.solve_sketch(si);
 
     let s = &p.sketches[si];

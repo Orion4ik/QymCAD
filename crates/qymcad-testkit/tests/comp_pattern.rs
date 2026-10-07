@@ -257,3 +257,15 @@ fn a_pattern_of_one_is_refused() {
     assert_eq!(p.add_comp_pattern(part, CompPatternKind::linear([1.0, 0.0, 0.0], 30.0, 1)), 0, "a row of one was taken");
     assert_eq!(p.timeline.len(), nodes, "a row of one laid a node");
 }
+
+/// A PATTERN WITH OVERFLOWING COUNTS IS REFUSED WITHOUT CRASH OR DIVIDE-BY-ZERO.
+#[test]
+fn huge_component_pattern_counts_do_not_overflow_or_divide_by_zero() {
+    let (mut p, part) = assembly_with_part();
+    let huge_linear = CompPatternKind::Linear { dir: [1.0, 0.0, 0.0], step: 10.0, count: 65536, more: [([0.0, 1.0, 0.0], 10.0, 65536), ([0.0, 0.0, 1.0], 0.0, 1)] };
+    let id = p.add_comp_pattern(part, huge_linear);
+    assert_eq!(id, 0, "a huge pattern exceeding the ceiling must be rejected");
+
+    let m = huge_linear.step_transform(1);
+    assert_eq!(m[0], 1.0);
+}

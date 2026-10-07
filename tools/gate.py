@@ -27,6 +27,7 @@ import argparse
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import time
@@ -34,7 +35,11 @@ import time
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 # THE CAP IS FOR A DESKTOP: without it a run that ate the memory took the editor down with it, twice. A CI runner is a
 # machine of its own with no user session of systemd to put a scope in, and the machine is the bound there.
-CAP = [] if os.environ.get("CI") else ["systemd-run", "--user", "--scope", "-q", "-p", "MemoryMax=16G", "-p", "MemorySwapMax=0"]
+CAP = (
+    []
+    if os.environ.get("CI") or sys.platform != "linux" or not shutil.which("systemd-run")
+    else ["systemd-run", "--user", "--scope", "-q", "-p", "MemoryMax=16G", "-p", "MemorySwapMax=0"]
+)
 
 # THE PROBES OF HEAVY GEOMETRY, left out of the fast level: the kernel's own work - booleans, fillets, meshes, the
 # exchange of files, the placing of parts - and the pictures of the window, which are the release's. A module not

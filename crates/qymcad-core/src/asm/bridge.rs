@@ -216,7 +216,8 @@ pub fn problem_of_with_pins(project: &Project, pins: &std::collections::HashMap<
     // The goal contributes no equations (`rows()` = 0); the null-space step in `iterate.rs` does its
     // work. It is added here so that splitting the problem into independent parts carries the goal into
     // the part that holds the mates of the grabbed body.
-    if let Some((comp, local, to)) = project.drag_pull {
+    if let Some(pull) = project.drag_pull {
+        let (comp, local, to) = (pull.component, pull.local, pull.target);
         if let Some(&bi) = index.get(&comp) {
             let anchor = Anchor { body: bi, local: Isometry3::from_parts(Translation3::new(local[0], local[1], local[2]), UnitQuaternion::identity()), roll_known: false };
             problem.add(super::problem::Constraint::Pull { a: anchor, to: Vector3::new(to[0], to[1], to[2]) });

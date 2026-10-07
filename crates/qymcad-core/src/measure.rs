@@ -70,17 +70,6 @@ fn angle_between(a: [f64; 3], b: [f64; 3]) -> f64 {
     c.acos().to_degrees()
 }
 
-/// A representative point on an element, for the cases where the shortest distance degenerates.
-fn anchor(i: &MeasureItem) -> [f64; 3] {
-    match *i {
-        MeasureItem::Point(p) => p,
-        MeasureItem::Line { origin, .. } => origin,
-        MeasureItem::Circle { center, .. } => center,
-        MeasureItem::Plane { origin, .. } => origin,
-        MeasureItem::Cylinder { origin, .. } => origin,
-    }
-}
-
 /// The axis or direction of an element, where it has one.
 fn direction(i: &MeasureItem) -> Option<[f64; 3]> {
     match *i {
@@ -181,12 +170,37 @@ pub fn measure_pair(a: &MeasureItem, b: &MeasureItem) -> MeasureResult {
             // the angle between a line and a plane is 90° minus the angle to the normal
             out.angle_deg = out.angle_deg.map(|a| (90.0 - a).abs());
         }
+        (Plane { origin: po, normal }, Cylinder { origin: co, axis, r }) | (Cylinder { origin: co, axis, r }, Plane { origin: po, normal }) => {
+            // The cylinder is parallel to the plane when its axis is perpendicular to the normal.
+            if dot(norm(*normal), norm(*axis)).abs() < 1e-9 {
+                let d_axis = dot(sub(*co, *po), norm(*normal)).abs();
+                out.distance = Some((d_axis - r).max(0.0));
+            }
+            // The angle between a cylinder axis and a plane is 90 deg minus the angle to the normal.
+            out.angle_deg = out.angle_deg.map(|a| (90.0 - a).abs());
+        }
+        (Line { origin: lo, .. }, Cylinder { origin: co, axis, r }) | (Cylinder { origin: co, axis, r }, Line { origin: lo, .. }) => {
+            if parallel {
+                let d_axis = point_line(*lo, *co, *axis);
+                out.distance = Some((d_axis - r).abs());
+            }
+        }
         (Line { origin: o1, dir: d1, .. }, Line { origin: o2, dir: d2, .. }) => {
             out.distance = Some(line_line(*o1, *d1, *o2, *d2));
         }
         (Cylinder { origin: o1, axis: a1, r: r1 }, Cylinder { origin: o2, axis: a2, r: r2 }) if parallel => {
-            // between walls: the distance between the axes minus both radii; a negative value means overlap
-            out.distance = Some(line_line(*o1, *a1, *o2, *a2) - r1 - r2);
+            let c2c = line_line(*o1, *a1, *o2, *a2);
+            let (r_min, r_max) = if r1 < r2 { (*r1, *r2) } else { (*r2, *r1) };
+            if c2c + r_min <= r_max {
+                // One cylinder is inside the other (coaxial or nested): the gap between the walls.
+                out.distance = Some(r_max - (c2c + r_min));
+            } else if c2c < r1 + r2 {
+                // The walls intersect.
+                out.distance = Some(0.0);
+            } else {
+                // External cylinders.
+                out.distance = Some(c2c - r1 - r2);
+            }
         }
         (Circle { center: c1, axis: a1, .. }, Circle { center: c2, axis: a2, .. }) if parallel => {
             out.distance = Some(point_line(*c2, *c1, *a1).hypot(dot(sub(*c2, *c1), norm(*a1))).min(len(sub(*c2, *c1))));
@@ -195,11 +209,7 @@ pub fn measure_pair(a: &MeasureItem, b: &MeasureItem) -> MeasureResult {
         // Every other pair: the distance between representative points is not computed, since it depends on
         // which points are taken and would be a number about nothing. The angle, where there is one, is
         // already computed above.
-        _ => {
-            if parallel {
-                out.distance = Some(len(sub(anchor(b), anchor(a))));
-            }
-        }
+        _ => {}
     }
     out
 }
@@ -302,5 +312,57 @@ mod tests {
         let r = measure_pair(&pl, &ln);
         assert!((r.distance.unwrap() - 9.0).abs() < 1e-9, "9 above the plane: {r:?}");
         assert!(r.angle_deg.unwrap() < 1e-9, "parallel to the plane means 0°, not 90° to the normal");
+    }
+
+    /// Two coaxial cylinders (e.g. counterbore and hole) must report the radial wall gap,
+    /// never a negative distance.
+    #[test]
+    fn coaxial_cylinders_give_radial_wall_clearance() {
+        let counterbore = MeasureItem::Cylinder { origin: [0.0, 0.0, 0.0], axis: [0.0, 0.0, 1.0], r: 8.0 };
+        let hole = MeasureItem::Cylinder { origin: [0.0, 0.0, -10.0], axis: [0.0, 0.0, 1.0], r: 4.0 };
+        let r = measure_pair(&counterbore, &hole);
+        assert_eq!(r.distance, Some(4.0), "radial wall gap between coaxial Ø16 and Ø8 is 4 mm");
+        assert!(r.angle_deg.unwrap() < 1e-9, "coaxial cylinders are parallel");
+    }
+
+    /// An eccentric cylinder inside another must report the minimum radial wall gap.
+    #[test]
+    fn nested_eccentric_cylinders_give_shortest_wall_clearance() {
+        let outer = MeasureItem::Cylinder { origin: [0.0, 0.0, 0.0], axis: [0.0, 0.0, 1.0], r: 10.0 };
+        let inner = MeasureItem::Cylinder { origin: [3.0, 0.0, 0.0], axis: [0.0, 0.0, 1.0], r: 5.0 };
+        let r = measure_pair(&outer, &inner);
+        assert_eq!(r.distance, Some(2.0), "minimum wall clearance between nested cylinders is 2 mm");
+    }
+
+    /// A straight edge parallel to a hole axis reports the distance from the edge line to the hole wall,
+    /// not an arbitrary distance between anchor endpoints.
+    #[test]
+    fn parallel_edge_and_cylinder_gives_wall_clearance() {
+        let edge = MeasureItem::Line { origin: [15.0, 5.0, 20.0], dir: [0.0, 0.0, -1.0], len: 20.0 };
+        let hole = MeasureItem::Cylinder { origin: [0.0, 0.0, 0.0], axis: [0.0, 0.0, 1.0], r: 3.0 };
+        let r = measure_pair(&edge, &hole);
+        let expected = 250.0_f64.sqrt() - 3.0;
+        assert!((r.distance.unwrap() - expected).abs() < 1e-6, "wall distance must be ~12.811 mm, got {:?}", r.distance);
+        assert!(r.angle_deg.unwrap() < 1e-9, "parallel edge and cylinder");
+    }
+
+    /// A planar face perpendicular to a hole axis has no constant distance and reports only the 90° angle.
+    #[test]
+    fn perpendicular_plane_and_cylinder_reports_no_distance() {
+        let top_face = MeasureItem::Plane { origin: [0.0, 0.0, 20.0], normal: [0.0, 0.0, 1.0] };
+        let hole = MeasureItem::Cylinder { origin: [10.0, 10.0, 0.0], axis: [0.0, 0.0, 1.0], r: 3.0 };
+        let r = measure_pair(&top_face, &hole);
+        assert_eq!(r.distance, None, "perpendicular plane and cylinder must not report a distance");
+        assert_eq!(r.angle_deg, Some(90.0), "perpendicular plane and cylinder are at 90°");
+    }
+
+    /// A planar face parallel to a cylinder axis reports wall-to-plane clearance.
+    #[test]
+    fn parallel_plane_and_cylinder_reports_wall_clearance() {
+        let side_face = MeasureItem::Plane { origin: [0.0, 0.0, 0.0], normal: [1.0, 0.0, 0.0] };
+        let cylinder = MeasureItem::Cylinder { origin: [10.0, 5.0, 0.0], axis: [0.0, 0.0, 1.0], r: 3.0 };
+        let r = measure_pair(&side_face, &cylinder);
+        assert_eq!(r.distance, Some(7.0), "distance from plane X=0 to cylinder at X=10 with r=3 is 7 mm");
+        assert_eq!(r.angle_deg, Some(0.0), "cylinder axis is parallel to plane");
     }
 }

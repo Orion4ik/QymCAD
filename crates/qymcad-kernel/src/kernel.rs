@@ -6,7 +6,6 @@
 //! body. A green test on the volume or area of a mesh therefore did not prove that the same thing appeared on
 //! screen, and an edit to the kernel in one copy silently failed to reach the other. There is now one
 //! implementation for everybody.
-#![allow(clippy::too_many_arguments)]
 use qymcad_core::geom::{Built, Mesh};
 use qymcad_core::model::Id;
 
@@ -322,6 +321,16 @@ impl qymcad_core::feature::Kernel for OcctKernel {
     fn workers(&self) -> usize {
         crate::workers()
     }
+    fn shares(&self, a: Id, b: Id) -> bool {
+        if a == b {
+            return true;
+        }
+        let shapes = self.shapes.borrow();
+        match (shapes.get(&a), shapes.get(&b)) {
+            (Some(sa), Some(sb)) => sa.shares(sb),
+            _ => false,
+        }
+    }
 
     fn split_off(&self, bodies: &[Id]) -> Option<Box<dyn qymcad_core::feature::KernelWorker>> {
         let mut mine = self.shapes.borrow_mut();
@@ -362,7 +371,7 @@ impl qymcad_core::feature::Kernel for OcctKernel {
             s.rename_faces(pairs);
         }
     }
-    fn body_edge_geometry(&self, body: Id) -> Vec<(u32, Vec<[f64; 3]>, Option<([f64; 3], [f64; 3], f64)>)> {
+    fn body_edge_geometry(&self, body: Id) -> Vec<qymcad_core::feature::BodyEdgeGeom> {
         let shapes = self.shapes.borrow();
         let Some(s) = shapes.get(&body) else { return Vec::new() };
         let (polys, ids, circles) = s.edges_full();
@@ -371,7 +380,11 @@ impl qymcad_core::feature::Kernel for OcctKernel {
             .zip(ids)
             .zip(circles)
             .filter(|((_, id), _)| *id != 0)
-            .map(|((poly, id), circ)| (id, poly.into_iter().map(|p| [p[0] as f64, p[1] as f64, p[2] as f64]).collect(), circ))
+            .map(|((poly, id), circ)| qymcad_core::feature::BodyEdgeGeom {
+                id,
+                poly: poly.into_iter().map(|p| [p[0] as f64, p[1] as f64, p[2] as f64]).collect(),
+                circle: circ.map(|(center, axis, radius)| qymcad_core::feature::CircleEdgeGeom::new(center, axis, radius)),
+            })
             .collect()
     }
     fn edge_face_pairs(&self, body: Id) -> Vec<(u32, u32, u32)> {
@@ -785,8 +798,6 @@ impl qymcad_core::feature::Kernel for OcctKernel {
         };
         self.finish(body, res)
     }
-    #[allow(clippy::too_many_arguments)]
-    #[allow(clippy::too_many_arguments)]
     fn helical(&self, h: qymcad_core::feature::Helical<'_>) -> Result<Built, qymcad_core::errors::CoreError> {
         // The profile has already been computed by the model kernel from the thread standard, as exact
         // segments and arcs; here there is only the sweep along the helix and the boolean — subtract for a

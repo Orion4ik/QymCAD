@@ -1019,20 +1019,25 @@ impl Project {
                             parcels.push(Parcel { node: nid, body: out, job });
                         }
                     }
-                    // A body wanted by two parcels keeps both of them here: the shape cannot be in two threads
-                    // at once, and copying it would cost what the work costs.
-                    let mut wanted: std::collections::HashMap<Id, usize> = std::collections::HashMap::new();
-                    for parcel in &parcels {
-                        for b in parcel.job.inputs() {
-                            *wanted.entry(*b).or_insert(0) += 1;
+                    // A body wanted by two parcels, or bodies that share sub-shapes (such as the cut face of a
+                    // split body), keep those parcels here: the shapes cannot be in two worker threads at once,
+                    // and copying them would cost what the work costs.
+                    let mut conflicted = vec![false; parcels.len()];
+                    for i in 0..parcels.len() {
+                        for j in (i + 1)..parcels.len() {
+                            let shares = parcels[i].job.inputs().iter().any(|&a| parcels[j].job.inputs().iter().any(|&b| a == b || kernel.shares(a, b)));
+                            if shares {
+                                conflicted[i] = true;
+                                conflicted[j] = true;
+                            }
                         }
                     }
                     let (mut alone, mut here): (Vec<_>, Vec<_>) = (Vec::new(), Vec::new());
-                    for parcel in parcels {
-                        if parcel.job.inputs().iter().all(|b| wanted.get(b).copied().unwrap_or(0) <= 1) {
-                            alone.push(parcel);
-                        } else {
+                    for (i, parcel) in parcels.into_iter().enumerate() {
+                        if conflicted[i] {
                             here.push(parcel);
+                        } else {
+                            alone.push(parcel);
                         }
                     }
                     // the parcels that travel: each with the bodies it needs, taken out of the shared kernel
@@ -2249,9 +2254,14 @@ impl Project {
         for (a, key) in axes.iter_mut().zip(["count", "count2", "count3"]) {
             a.count = p.dim(key, a.count as f64).round().max(1.0) as u32;
         }
+        let (c1, c2, c3) = (axes[0].count.max(1) as u64, axes[1].count.max(1) as u64, axes[2].count.max(1) as u64);
+        let total = c1.saturating_mul(c2).saturating_mul(c3);
         // a pattern of one copy is the body alone: it stood green and changed nothing
-        if axes.iter().map(|a| a.count.max(1)).product::<u32>() < 2 {
+        if total < 2 {
             return crate::feature::KernelJob::refused(crate::errors::CoreError::ArrayOfOne);
+        }
+        if total > crate::model::MAX_PATTERN_INSTANCES as u64 {
+            return crate::feature::KernelJob::refused(crate::errors::CoreError::ArrayEmpty);
         }
         // Parametric: the step lives as an expression per vector component, so global parameters move
         // the pattern. An empty expression keeps the stored number. The keys are the field names in the
@@ -2291,6 +2301,9 @@ impl Project {
         let count = p.dim("count", count as f64).round().max(1.0) as u32;
         if count < 2 {
             return crate::feature::KernelJob::refused(crate::errors::CoreError::ArrayOfOne);
+        }
+        if count > crate::model::MAX_PATTERN_INSTANCES {
+            return crate::feature::KernelJob::refused(crate::errors::CoreError::ArrayEmpty);
         }
         let c = count.max(1);
         let step = if angle.abs() >= 359.9 { 360.0 / c as f64 } else { angle / c as f64 };
@@ -2950,7 +2963,6 @@ impl Project {
     ///
     /// Returns `(start along the normal, length)`. The target body `src` is needed so the extent knows the
     /// geometry it cuts: "through all" without a bounding box is a blind pocket, not a through cut.
-    #[allow(clippy::too_many_arguments)]
     fn tool_extent(&self, src: Id, pl: &[f64; 12], h: f64, down: f64, extent: crate::feature::Extent, op: u8) -> (f64, f64) {
         let n = [pl[2], pl[6], pl[10]];
         let o = [pl[3], pl[7], pl[11]];

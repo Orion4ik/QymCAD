@@ -104,6 +104,30 @@ extern "C" QymShape* qym_shape_from_brep(const unsigned char* data, size_t len) 
 
 extern "C" void qym_shape_free(QymShape* s) { delete s; }
 
+// WHETHER TWO SHAPES SHARE A SUB-SHAPE (e.g. the cut face of a split body).
+//
+// Meshing in OCCT (BRepMesh_IncrementalMesh) rewrites the triangulation stored directly on the
+// face's TShape. If two shapes share a face, they cannot be rebuilt or meshed concurrently on
+// two threads without data races and memory corruption.
+extern "C" int qym_shape_shares(const QymShape* a, const QymShape* b) {
+    if (!a || !b) return 0;
+    if (a == b) return 1;
+    try {
+        TopTools_IndexedMapOfShape ma;
+        TopExp::MapShapes(a->shape, ma);
+        TopTools_IndexedMapOfShape mb;
+        TopExp::MapShapes(b->shape, mb);
+        const TopTools_IndexedMapOfShape& small = (ma.Extent() <= mb.Extent()) ? ma : mb;
+        const TopTools_IndexedMapOfShape& large = (ma.Extent() <= mb.Extent()) ? mb : ma;
+        for (int i = 1; i <= small.Extent(); ++i) {
+            if (large.Contains(small(i))) return 1;
+        }
+        return 0;
+    } catch (...) {
+        return 0;
+    }
+}
+
 // A rigid transformation of a shape by a 3x4 row-major matrix (the X, Y and N axes plus the origin).
 extern "C" QymShape* qym_shape_transform(const QymShape* s, const double* m) {
     if (!s) return nullptr;

@@ -36,7 +36,7 @@ fn big_sketch_solve_is_fast() {
     let some_pt = p.sketches[si].points[10].id;
     let t = Instant::now();
     for k in 0..10 {
-        p.solve_sketch_drag_fast(si, Some((some_pt, 5.0 + k as f64, 5.0)));
+        p.solve_sketch_drag_fast(si, Some(qymcad_core::solver::DragPull2d::new(some_pt, 5.0 + k as f64, 5.0)));
     }
     let drag_ms = t.elapsed().as_millis() / 10;
     eprintln!("[perf] drag frame: {drag_ms} ms");

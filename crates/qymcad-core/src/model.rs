@@ -56,7 +56,7 @@ pub(crate) fn yes() -> bool {
 /// Stored as steps rather than as a number: deflection in millimetres is a quantity the user has no
 /// reason to reason about and every chance of mistyping. A step also survives a change of the formula
 /// underneath it.
-#[derive(Clone, Copy, PartialEq, Eq, Debug, Default, Serialize, Deserialize)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, Default, Serialize, Deserialize)]
 pub enum GeomQuality {
     /// Fast and coarse: rough estimates, heavy assemblies.
     Draft,
@@ -100,7 +100,7 @@ impl GeomQuality {
 /// Every field is free text, deliberately: one person's version is `1.2` and another's is `rev. B`, and
 /// an imposed format would only be worked around in the comment field. The application does not
 /// interpret these fields, it stores and displays them.
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct DocMeta {
     #[serde(default)]
     pub title: String,
@@ -149,6 +149,20 @@ pub struct ElemSnapshot {
     pub dir: [f64; 3],
 }
 
+/// Pointer drag pull: the component, a point on it (in local space) and where that point is led (in world space).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct DragPull {
+    pub component: Id,
+    pub local: [f64; 3],
+    pub target: [f64; 3],
+}
+
+impl DragPull {
+    pub fn new(component: Id, local: [f64; 3], target: [f64; 3]) -> Self {
+        Self { component, local, target }
+    }
+}
+
 /// Root of the project (the document).
 ///
 /// Bodies are one record per body (`bodies: Vec<Body>`): geometry, faces, name and visibility together.
@@ -186,7 +200,11 @@ pub struct Project {
     /// mates: everything is solved at once and the mechanism moves as a chain. Solving in two steps,
     /// mates first and drag second, makes a nested mate lag by one frame.
     #[serde(skip)]
-    pub drag_pull: Option<(Id, [f64; 3], [f64; 3])>,
+    pub drag_pull: Option<DragPull>,
+    /// Whether automatic constraints are added when drawing or when a shape like a rectangle is broken.
+    /// Not serialised into the document (lives in user preferences).
+    #[serde(skip)]
+    pub auto_constrain: bool,
     /// Which mates are in conflict, by id, rather than a single flag saying a conflict exists somewhere.
     ///
     /// A derived field, not written to the file (like `mates_conflict`); the solve fills it in. It exists
@@ -651,6 +669,69 @@ impl Sketch {
             Constraint::Distance { a, b, .. } => chord(a, b),
             _ => false,
         })
+    }
+
+    /// If `center` is an end centre of a slot, returns the other points of the slot:
+    /// the second centre and the four boundary points.
+    pub fn slot_points_of(&self, center: Id) -> Option<Vec<Id>> {
+        let (arc1_center, a1, b1) = self.entities.iter().find_map(|e| match e.kind {
+            EntityKind::Arc { center: c, a, b, .. } if c == center => Some((c, a, b)),
+            _ => None,
+        })?;
+        for e in &self.entities {
+            if let EntityKind::Arc { center: c2, a: a2, b: b2, .. } = e.kind {
+                if c2 == arc1_center {
+                    continue;
+                }
+                let has_line = |p: Id, q: Id| {
+                    self.entities.iter().any(|ent| match ent.kind {
+                        EntityKind::Line { a, b } => (a == p && b == q) || (a == q && b == p),
+                        _ => false,
+                    })
+                };
+                let connected = (has_line(a1, a2) && has_line(b1, b2)) || (has_line(a1, b2) && has_line(b1, a2));
+                if connected {
+                    return Some(vec![c2, a1, b1, a2, b2]);
+                }
+            }
+        }
+        None
+    }
+
+    /// Whether an arc is a fillet: it is not a slot, and its centre is held by tangency
+    /// constraints to the edges it rounds.
+    pub fn is_fillet_arc(&self, center: Id) -> bool {
+        if self.slot_points_of(center).is_some() {
+            return false;
+        }
+        let (arc_a, arc_b) = match self.entities.iter().find_map(|e| match e.kind {
+            EntityKind::Arc { center: c, a, b, .. } if c == center => Some((a, b)),
+            _ => None,
+        }) {
+            Some(ends) => ends,
+            None => return false,
+        };
+        self.constraints.iter().any(|c| match *c {
+            Constraint::Tangent { a, b, c, .. } => c == center && (a == arc_a || b == arc_a || a == arc_b || b == arc_b),
+            Constraint::CircleTangent { c1, c2, .. } => c1 == center || c2 == center,
+            _ => false,
+        })
+    }
+
+    /// Points of fillet arcs (the centre and the tangency endpoints): they are not dragged
+    /// directly, or the fillet breaks.
+    pub fn fillet_points(&self) -> std::collections::HashSet<Id> {
+        let mut pts = std::collections::HashSet::new();
+        for e in &self.entities {
+            if let EntityKind::Arc { center, a, b, .. } = e.kind {
+                if self.is_fillet_arc(center) {
+                    pts.insert(center);
+                    pts.insert(a);
+                    pts.insert(b);
+                }
+            }
+        }
+        pts
     }
 
     /// The points not drawn among the sketch's own: the frame of reference, drawn by the axis marker. The virtual sharp of
@@ -1936,7 +2017,7 @@ mod timeline;
 mod sketch;
 pub use sketch::{ChamferLegs, CornerAt, CornerBlend, CornerCut, CornerTool, FilletBy, FilletSize, TextSpec};
 pub(crate) mod comp_pattern;
-pub use comp_pattern::{CompPattern, CompPatternKind};
+pub use comp_pattern::{CompPattern, CompPatternKind, MAX_PATTERN_INSTANCES};
 mod projection;
 
 impl Project {
@@ -2606,9 +2687,9 @@ impl Project {
         self.solve_sketch_drag(si, None)
     }
 
-    /// Solve a sketch while pinning the dragged point `drag = Some((id, x, y))` to the cursor: the point
+    /// Solve a sketch while pinning the dragged point `drag = Some(DragPull2d { point, x, y })` to the cursor: the point
     /// follows the pointer and constrained geometry resists.
-    pub fn solve_sketch_drag(&mut self, si: usize, drag: Option<(Id, f64, f64)>) -> f64 {
+    pub fn solve_sketch_drag(&mut self, si: usize, drag: Option<crate::solver::DragPull2d>) -> f64 {
         self.eval_parameters(); // Parametric dimensions become values before the solve.
         self.solve_sketch_inner(si, drag, 120)
     }
@@ -2620,7 +2701,7 @@ impl Project {
     /// Without this every drag frame ran `eval_parameters`, a full Levenberg-Marquardt solve (120
     /// iterations with a numeric Jacobian) and a regenerate over every sketch, which lagged visibly on any
     /// sizeable sketch.
-    pub fn solve_sketch_drag_fast(&mut self, si: usize, drag: Option<(Id, f64, f64)>) -> f64 {
+    pub fn solve_sketch_drag_fast(&mut self, si: usize, drag: Option<crate::solver::DragPull2d>) -> f64 {
         self.solve_sketch_inner(si, drag, 40)
     }
 
@@ -3991,7 +4072,6 @@ impl Project {
     }
 
     /// Grid pattern: direction one (`d1` by `count`) and direction two (`d2` by `count2`).
-    #[allow(clippy::too_many_arguments)]
     pub fn add_linear_array_grid(&mut self, src: Id, a: ArrayAxis, b: ArrayAxis) -> Id {
         let ([dx, dy, dz], count) = (a.d, a.count);
         let ([dx2, dy2, dz2], count2) = (b.d, b.count);
@@ -4264,6 +4344,7 @@ impl Project {
         self.active_component.hash(&mut h);
         self.rollback.hash(&mut h);
         (self.units as u8).hash(&mut h);
+        self.geom_quality.hash(&mut h);
         // Components: name, kind, parent, visibility, grounding and placement.
         for c in &self.components {
             (c.id, &c.name, c.kind as u8, c.parent, c.visible, c.grounded).hash(&mut h);
@@ -4429,6 +4510,30 @@ impl Project {
         let mut imported: Vec<Id> = self.imported_bodies.iter().copied().collect();
         imported.sort_unstable();
         imported.hash(&mut h);
+        // Assembly: mate constraints and dead bodies.
+        for mc in &self.mate_constraints {
+            (mc.id, &mc.name, mc.kind as u8, &mc.members, &mc.anchors).hash(&mut h);
+        }
+        self.dead_bodies.hash(&mut h);
+        // Metadata, part and face colours: document edits that carry no geometry rebuild of their own.
+        if placement {
+            (&self.meta.title, &self.meta.author, &self.meta.version, &self.meta.comment).hash(&mut h);
+            let mut pc: Vec<_> = self.part_colors.iter().collect();
+            pc.sort_by_key(|(k, _)| **k);
+            for (id, color) in pc {
+                (id, color).hash(&mut h);
+            }
+            let mut fc: Vec<_> = self.face_colors.iter().collect();
+            fc.sort_by_key(|(k, _)| **k);
+            for (id, colors) in fc {
+                (id, colors).hash(&mut h);
+            }
+            let mut tc: Vec<_> = self.tri_colors.iter().collect();
+            tc.sort_by_key(|(k, _)| **k);
+            for (id, (colors, indices)) in tc {
+                (id, colors, indices).hash(&mut h);
+            }
+        }
         // Import sources: id, name and size, but not the bytes — tens of megabytes of data that never
         // change.
         for s in &self.sources {

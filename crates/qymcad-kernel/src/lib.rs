@@ -214,6 +214,7 @@ extern "C" {
     fn qym_shape_patch(s: *const QymShape, idx: *const u32, n: usize, tangent: i32, name: u32) -> *mut QymShape;
     fn qym_shape_tessellate(s: *const QymShape, defl: c_double) -> *mut QymDoc;
     fn qym_shape_free(s: *mut QymShape);
+    fn qym_shape_shares(a: *const QymShape, b: *const QymShape) -> i32;
     fn qym_shape_to_brep(s: *const QymShape, out_len: *mut usize) -> *mut u8;
     fn qym_shape_from_brep(data: *const u8, len: usize) -> *mut QymShape;
     fn qym_bytes_free(p: *mut u8);
@@ -403,6 +404,11 @@ impl Shape {
     pub fn from_brep_bytes(data: &[u8]) -> Option<Shape> {
         let p = unsafe { qym_shape_from_brep(data.as_ptr(), data.len()) };
         (!p.is_null()).then(|| Shape { ptr: p })
+    }
+
+    /// Whether this shape shares any topological sub-shape (face, edge, vertex) with another.
+    pub fn shares(&self, other: &Shape) -> bool {
+        unsafe { qym_shape_shares(self.ptr, other.ptr) != 0 }
     }
 }
 
@@ -631,7 +637,8 @@ pub fn refusal_for_report() -> Option<String> {
 // A shape owns its kernel handle as a sole raw pointer. Moving that ownership to another thread is safe: a
 // STEP import or export runs on a worker thread so the interface can show progress, and the object is never
 // shared between threads at once, only moved. There is no concurrency over one shape, so `Send` is enough and
-// `Sync` is not claimed.
+// `Sync` is not claimed. Shapes that share a sub-shape (such as split body pieces) must be kept on the same
+// thread rather than dispatched concurrently, checked via `shares`.
 unsafe impl Send for Shape {}
 
 /// WHICH WAY A HELIX WINDS: the ordinary right hand, or the left one.

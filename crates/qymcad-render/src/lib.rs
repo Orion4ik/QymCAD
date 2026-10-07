@@ -1702,7 +1702,7 @@ pub fn draw_sketch_constraints(pn: &Painting, painter: &egui::Painter, rect: Rec
     // highlighting the selected entities (white) and the hovered ones (blue, thinner)
     for e in &s.entities {
         let sel = pn.sel_sk.items.contains(&(1, e.id));
-        let hov = pn.hover.sketch == Some((1, e.id));
+        let hov = pn.hover.sketch == Some((1, e.id)) || (pn.armed.draw_kind() == 1 && pn.tool.hover_line == Some(e.id));
         if !sel && !hov {
             continue;
         }
@@ -1832,7 +1832,9 @@ pub fn draw_sketch_preview(pn: &Painting, painter: &egui::Painter, rect: Rect) {
                 // a live preview of the automatic constraints: what will be attached if a point is placed here
                 if let Some(si) = qymcad_ui_state::edit_si(pn.project, &pn.sketch_ses) {
                     let prev = (pn.tool.pts.len() >= 2).then(|| pn.tool.pts[pn.tool.pts.len() - 2]);
-                    for (g, at) in qymcad_pick::infer_hints(&DrawCtx { cam: &pn.cam, set: pn.set, scheme: pn.scheme, project: pn.project, active_path: pn.active_path }, si, prev, last, cur) {
+                    for (g, at) in
+                        qymcad_pick::infer_hints(&DrawCtx { cam: &pn.cam, set: pn.set, scheme: pn.scheme, project: pn.project, active_path: pn.active_path }, si, prev, last, cur, pn.tool.hover_line)
+                    {
                         let sat = sh.at(at) + egui::vec2(11.0, -11.0);
                         painter.rect_filled(Rect::from_center_size(sat, egui::vec2(14.0, 14.0)), 2.0, pn.scheme.pal.constraint_ok());
                         paint_gly(painter, sat, 4.0, g, pn.scheme.pal.glyph_text());
@@ -1950,6 +1952,28 @@ pub fn draw_sketch_preview(pn: &Painting, painter: &egui::Painter, rect: Rect) {
                     } else {
                         painter.line_segment([sh.at(s), sc], stroke);
                     }
+                }
+            } else if pn.tool.pts.len() == 2 {
+                let (c, a) = (pn.tool.pts[0], pn.tool.pts[1]);
+                let r = ((a.x - c.x).powi(2) + (a.y - c.y).powi(2)).sqrt();
+                if r > 1e-6 {
+                    let a0 = (a.y - c.y).atan2(a.x - c.x);
+                    let mut a1 = (cur.y - c.y).atan2(cur.x - c.x);
+                    let ccw = (a.x - c.x) * (cur.y - c.y) - (a.y - c.y) * (cur.x - c.x) > 0.0;
+                    if ccw && a1 < a0 {
+                        a1 += std::f64::consts::TAU;
+                    } else if !ccw && a1 > a0 {
+                        a1 -= std::f64::consts::TAU;
+                    }
+                    let pts: Vec<Pos2> = (0..=40)
+                        .map(|k| {
+                            let t = a0 + (a1 - a0) * k as f64 / 40.0;
+                            sh.at(Point2::new(c.x + r * t.cos(), c.y + r * t.sin()))
+                        })
+                        .collect();
+                    painter.add(egui::Shape::line(pts, stroke));
+                    let scn = sh.at(c);
+                    painter.line_segment([scn, sc], Stroke::new(0.6, col));
                 }
             } else if let Some(&c) = pn.tool.pts.first() {
                 let scn = sh.at(c);
@@ -3694,6 +3718,82 @@ pub fn draw_face_arrow(pn: &Painting, painter: &egui::Painter, rect: Rect, basis
     let col = if hot { pn.scheme.pal.highlight() } else { pn.scheme.pal.handle_face() };
     painter.add(egui::Shape::line_segment([a, b], Stroke::new(if hot { 3.5 } else { 2.5 }, col)));
     painter.circle_filled(b, if hot { 6.0 } else { 5.0 }, col);
+
+    let dir = b - a;
+    let len = dir.length();
+    if len > 8.0 {
+        let u = dir / len;
+        let v = egui::vec2(-u.y, u.x);
+        let arrow_len = 8.0;
+        let arrow_w = 4.5;
+        let p1 = b - u * arrow_len + v * arrow_w;
+        let p2 = b - u * arrow_len - v * arrow_w;
+        painter.add(egui::Shape::convex_polygon(vec![b, p1, p2], col, Stroke::NONE));
+    }
+
+    if let Some(key) = qymcad_ui_state::face_arrow_key(&pn.armed) {
+        let val = qymcad_ui_state::cmd_val(pn.cmd, key);
+        let label = format!("{:.2} mm", val);
+        let font_id = egui::FontId::monospace(11.0);
+        let text_pos = b + egui::vec2(10.0, -8.0);
+        let bg_rect = Rect::from_min_size(text_pos + egui::vec2(-2.0, -1.0), egui::vec2(56.0, 15.0));
+        painter.rect_filled(bg_rect, 3.0, egui::Color32::from_black_alpha(180));
+        painter.text(text_pos, egui::Align2::LEFT_TOP, label, font_id, egui::Color32::WHITE);
+    }
+}
+
+/// The radius/chamfer handle at a selected edge: an arc ring and a knob with numeric readout.
+pub fn draw_edge_radius_handle(
+    pn: &Painting,
+    painter: &egui::Painter,
+    rect: Rect,
+    basis: &([f64; 3], [f64; 3], [f64; 3]),
+) {
+    let Some(gizmo) = qymcad_ui_state::edge_radius_geometry(pn) else { return };
+    let scr = qymcad_ui_state::Screen { cam: &pn.cam, set: pn.set, rect, basis };
+    let s_orig = scr.at(gizmo.origin).0;
+    let s_tip = scr.at(gizmo.tip).0;
+    let hot = pn.edge_handle_drag.is_some();
+    let col = if hot { pn.scheme.pal.highlight() } else { pn.scheme.pal.handle_face() };
+
+    let r = gizmo.radius.max(0.1);
+    let n_steps = 16;
+    let mut arc_pts = Vec::with_capacity(n_steps + 1);
+    let is_fillet = pn.armed.cmd_kind() == 4;
+    let max_angle = if is_fillet { std::f64::consts::FRAC_PI_2 } else { std::f64::consts::PI };
+    for i in 0..=n_steps {
+        let t = (i as f64) / (n_steps as f64) * max_angle;
+        let c = t.cos();
+        let s = t.sin();
+        let p_w = [
+            gizmo.origin[0] + (gizmo.normal[0] * c + gizmo.binormal[0] * s) * r,
+            gizmo.origin[1] + (gizmo.normal[1] * c + gizmo.binormal[1] * s) * r,
+            gizmo.origin[2] + (gizmo.normal[2] * c + gizmo.binormal[2] * s) * r,
+        ];
+        arc_pts.push(scr.at(p_w).0);
+    }
+    if arc_pts.len() >= 2 {
+        painter.add(egui::Shape::line_segment([s_orig, arc_pts[0]], Stroke::new(1.0, col)));
+        if is_fillet {
+            if let Some(last) = arc_pts.last() {
+                painter.add(egui::Shape::line_segment([s_orig, *last], Stroke::new(1.0, col)));
+            }
+        }
+        for w in arc_pts.windows(2) {
+            painter.line_segment([w[0], w[1]], Stroke::new(if hot { 2.5 } else { 1.5 }, col));
+        }
+    }
+
+    painter.add(egui::Shape::line_segment([s_orig, s_tip], Stroke::new(if hot { 3.0 } else { 2.0 }, col)));
+    painter.circle_filled(s_tip, if hot { 6.5 } else { 5.0 }, col);
+    painter.circle_stroke(s_tip, if hot { 7.5 } else { 6.0 }, Stroke::new(1.0, egui::Color32::WHITE));
+
+    let label = format!("{:.2} mm", gizmo.radius);
+    let font_id = egui::FontId::monospace(11.0);
+    let text_pos = s_tip + egui::vec2(10.0, -8.0);
+    let bg_rect = Rect::from_min_size(text_pos + egui::vec2(-2.0, -1.0), egui::vec2(56.0, 15.0));
+    painter.rect_filled(bg_rect, 3.0, egui::Color32::from_black_alpha(180));
+    painter.text(text_pos, egui::Align2::LEFT_TOP, label, font_id, egui::Color32::WHITE);
 }
 
 /// THE FACES THE COMMAND WILL ADD, as its trial built them, in the "will be added" colour over the part - the surface of

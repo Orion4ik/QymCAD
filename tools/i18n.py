@@ -100,7 +100,7 @@ def parse_ftl(path: Path) -> dict:
             if line.startswith((" ", "\t")):
                 if cur_key is not None:
                     cur_val.append(trimmed)
-            elif " = " in line and not line.startswith("-"):
+            elif not line.startswith("-") and re.match(r"^[a-zA-Z0-9_-]+\s*=", line):
                 if cur_key is not None:
                     val_str = " ".join(cur_val)
                     entries[cur_key] = {
@@ -111,9 +111,10 @@ def parse_ftl(path: Path) -> dict:
                     }
                     comments = []
 
-                parts = line.split(" = ", 1)
+                parts = line.split("=", 1)
                 cur_key = parts[0].strip()
-                cur_val = [parts[1].strip()]
+                v = parts[1].strip()
+                cur_val = [v] if v else []
                 cur_line = line_no
 
     if cur_key is not None:

@@ -137,4 +137,37 @@ mod tests {
             app.viewing.view.center
         );
     }
+
+    #[test]
+    fn dragging_empty_space_with_shift_draws_selection_box_without_moving_view() {
+        let (mut app, ctx, _si) = sketch_with_a_dimension();
+        let center_before = app.viewing.view.center;
+        let rect = app.viewing.view_rect;
+
+        let far = egui::pos2(rect.min.x + 10.0, rect.min.y + 10.0);
+        let shift_mods = egui::Modifiers { shift: true, ..Default::default() };
+        let shift_frame = |events: Vec<egui::Event>| egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(900.0, 700.0))),
+            modifiers: shift_mods,
+            events,
+            ..Default::default()
+        };
+        let _ = ctx.run_ui(shift_frame(vec![egui::Event::PointerMoved(far)]), |c| app.viewport(c));
+        let _ = ctx.run_ui(shift_frame(vec![egui::Event::PointerButton { pos: far, button: egui::PointerButton::Primary, pressed: true, modifiers: shift_mods }]), |c| app.viewport(c));
+        let mut box_started = false;
+        for k in 1..=4 {
+            let _ = ctx.run_ui(shift_frame(vec![egui::Event::PointerMoved(far + egui::vec2(15.0 * k as f32, 0.0))]), |c| app.viewport(c));
+            box_started |= app.chosen.tree_sel.box_start.is_some();
+        }
+        let _ = ctx.run_ui(shift_frame(vec![egui::Event::PointerButton { pos: far + egui::vec2(60.0, 0.0), button: egui::PointerButton::Primary, pressed: false, modifiers: shift_mods }]), |c| {
+            app.viewport(c)
+        });
+
+        assert!(box_started, "Shift+drag in empty space did not start a selection box");
+        assert!(
+            (app.viewing.view.center.x - center_before.x).abs() < 1e-9 && (app.viewing.view.center.y - center_before.y).abs() < 1e-9,
+            "Shift+drag moved the sheet view: centre was {center_before:?}, became {:?}",
+            app.viewing.view.center
+        );
+    }
 }

@@ -164,11 +164,12 @@ impl Project {
             return None;
         }
         let mut out = Vec::new();
-        for (id, poly, circ) in geom {
-            if !want.contains(&id) || poly.len() < 2 {
+        for item in geom {
+            if !want.contains(&item.id) || item.poly.len() < 2 {
                 continue;
             }
-            out.push(Self::curve_to_2d(&poly, circ, frame));
+            let circ = item.circle.map(|c| (c.center, c.axis, c.radius));
+            out.push(Self::curve_to_2d(&item.poly, circ, frame));
         }
         (!out.is_empty()).then_some(out)
     }

@@ -18,19 +18,39 @@ pub struct RadiusVar {
     pub value: f64,
 }
 
+/// A point pulled towards a target position by the cursor.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct DragPull2d {
+    pub point: Id,
+    pub x: f64,
+    pub y: f64,
+}
+
+impl DragPull2d {
+    pub fn new(point: Id, x: f64, y: f64) -> Self {
+        Self { point, x, y }
+    }
+}
+
+impl From<(Id, f64, f64)> for DragPull2d {
+    fn from((point, x, y): (Id, f64, f64)) -> Self {
+        Self { point, x, y }
+    }
+}
+
 /// Solve the constraints over points alone, without radius unknowns — for tests on pure point sets.
 pub fn solve(points: &mut [SketchPoint], constraints: &[Constraint]) -> f64 {
     solve_full(points, &mut Vec::new(), constraints, None)
 }
 
 /// Solve with a dragged point pulled towards the cursor, without radius unknowns.
-pub fn solve_drag(points: &mut [SketchPoint], constraints: &[Constraint], drag: Option<(Id, f64, f64)>) -> f64 {
+pub fn solve_drag(points: &mut [SketchPoint], constraints: &[Constraint], drag: Option<DragPull2d>) -> f64 {
     solve_full(points, &mut Vec::new(), constraints, drag)
 }
 
-/// The full solver: points plus circle radii as unknowns. `drag = Some((id, x, y))` pulls the dragged point
+/// The full solver: points plus circle radii as unknowns. `drag = Some(DragPull2d { point, x, y })` pulls the dragged point
 /// towards the cursor; fully constrained geometry resists that pull.
-pub fn solve_full(points: &mut [SketchPoint], radii: &mut [RadiusVar], constraints: &[Constraint], drag: Option<(Id, f64, f64)>) -> f64 {
+pub fn solve_full(points: &mut [SketchPoint], radii: &mut [RadiusVar], constraints: &[Constraint], drag: Option<DragPull2d>) -> f64 {
     solve_full_iter(points, radii, constraints, drag, 120)
 }
 
@@ -45,7 +65,7 @@ pub fn solve_full(points: &mut [SketchPoint], radii: &mut [RadiusVar], constrain
 /// multi-start: a violated axis dimension gets its point mirrored to the other side and the system is solved
 /// again, and the result is accepted only if the residual strictly dropped. Disabled during a drag, where frame
 /// stability and responsiveness outweigh it.
-pub fn solve_full_iter(points: &mut [SketchPoint], radii: &mut [RadiusVar], constraints: &[Constraint], drag: Option<(Id, f64, f64)>, max_iter: usize) -> f64 {
+pub fn solve_full_iter(points: &mut [SketchPoint], radii: &mut [RadiusVar], constraints: &[Constraint], drag: Option<DragPull2d>, max_iter: usize) -> f64 {
     // The solver must never be able to corrupt the sketch.
     //
     // A numerical method can produce non-numbers: a degenerate system, huge magnitudes, a division by
@@ -66,7 +86,7 @@ pub fn solve_full_iter(points: &mut [SketchPoint], radii: &mut [RadiusVar], cons
     f64::INFINITY
 }
 
-fn solve_full_iter_inner(points: &mut [SketchPoint], radii: &mut [RadiusVar], constraints: &[Constraint], drag: Option<(Id, f64, f64)>, max_iter: usize) -> f64 {
+fn solve_full_iter_inner(points: &mut [SketchPoint], radii: &mut [RadiusVar], constraints: &[Constraint], drag: Option<DragPull2d>, max_iter: usize) -> f64 {
     // Two stages. First, a solve with a pull towards the previous state, which selects the solution closest to
     // how the sketch currently looks — without it the free degrees of freedom, such as the rotation of a
     // polygon, drift anywhere. Second, a polish without that pull, started from the solution just found: the
@@ -190,7 +210,7 @@ fn violated_axis_dims(points: &[SketchPoint], constraints: &[Constraint], limit:
 // THE INDEX IS THE MEANING: `a[i][i]` is the DIAGONAL of the normal matrix. An iterator over rows would
 // still have to index the column, and the damping would stop being visibly a diagonal one.
 #[allow(clippy::needless_range_loop)]
-fn solve_lm(points: &mut [SketchPoint], radii: &mut [RadiusVar], constraints: &[Constraint], drag: Option<(Id, f64, f64)>, max_iter: usize, pull: Pull) -> f64 {
+fn solve_lm(points: &mut [SketchPoint], radii: &mut [RadiusVar], constraints: &[Constraint], drag: Option<DragPull2d>, max_iter: usize, pull: Pull) -> f64 {
     let Pull { reg: w_reg, lambda0, hold_arms } = pull;
     if points.is_empty() {
         return 0.0;
@@ -203,7 +223,7 @@ fn solve_lm(points: &mut [SketchPoint], radii: &mut [RadiusVar], constraints: &[
     let has = |id: Id| idx.contains_key(&id);
     let is_center = |id: Id| ridx.contains_key(&id);
     let cons: Vec<Constraint> = constraints.iter().filter(|&c| cons_ok(c, &has, &is_center)).cloned().collect();
-    let drag = drag.and_then(|(id, x, y)| idx.get(&id).map(|&i| (i, x, y)));
+    let drag = drag.and_then(|d| idx.get(&d.point).map(|&i| (i, d.x, d.y)));
     if cons.is_empty() && drag.is_none() {
         return 0.0;
     }

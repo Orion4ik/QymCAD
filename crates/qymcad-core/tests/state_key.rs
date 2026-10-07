@@ -117,6 +117,30 @@ fn every_user_edit_changes_the_key() {
     check("a parameter was added", &mut p, &|p| {
         p.parameters.push(qymcad_core::model::Param { name: "h".into(), expr: "10".into(), ..Default::default() });
     });
+    check("document title was edited", &mut p, &|p| {
+        p.meta.title = "Widget".into();
+    });
+    check("document author was edited", &mut p, &|p| {
+        p.meta.author = "Jane Doe".into();
+    });
+    check("document version was edited", &mut p, &|p| {
+        p.meta.version = "v2".into();
+    });
+    check("document comment was edited", &mut p, &|p| {
+        p.meta.comment = "Revision notes".into();
+    });
+    check("geometric quality was changed", &mut p, &|p| {
+        p.geom_quality = qymcad_core::model::GeomQuality::Fine;
+    });
+    check("a part colour was assigned", &mut p, &|p| {
+        p.part_colors.insert(1, [255, 0, 0]);
+    });
+    check("a face colour was assigned", &mut p, &|p| {
+        p.face_colors.insert(1, vec![(10, [0, 255, 0])]);
+    });
+    check("a triangle colour palette was assigned", &mut p, &|p| {
+        p.tri_colors.insert(1, (vec![[0, 0, 255]], vec![0]));
+    });
     check("a component was deleted", &mut p, &|p| {
         let id = p.components.last().map(|c| c.id).unwrap();
         p.components.retain(|c| c.id != id);

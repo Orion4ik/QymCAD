@@ -606,6 +606,7 @@ pub(crate) fn draw_3d(pn: &Painting, painter: &egui::Painter, rect: Rect) {
     // thicken, shell, both splits). It is drawn AFTER the preview branches so that no call has to be
     // added inside each of them: those would drift apart, the way the popups once did.
     draw_face_arrow(pn, painter, rect, &basis);
+    draw_edge_radius_handle(pn, painter, rect, &basis);
     draw_fillet_vertices(pn, painter, rect); // the points a per-vertex radius is set at
                                              // the wireframe preview of the primitive being created
     draw_prim_preview(pn, painter, rect);

@@ -28,7 +28,9 @@ impl App {
             "sketch.corner-fillet" => qymcad_ui_state::set_click_op(&mut qymcad_ui_state::tools_of!(self), &mut self.viewing.mode_3d, 4),
             "sketch.trim" => qymcad_ui_state::set_click_op(&mut qymcad_ui_state::tools_of!(self), &mut self.viewing.mode_3d, 1),
             "sketch.mirror" => qymcad_ui_state::modify_button(qymcad_ui_state::editing_of!(self), &mut qymcad_ui_state::tools_of!(self), self.sk_pat, &self.tool_prefs, EditTool::Mirror),
-            "sketch.construction" => self.tools.tool.construction = !self.tools.tool.construction,
+            "sketch.construction" if !qymcad_ui_state::construction_selected(qymcad_ui_state::editing_of!(self), &self.tools.sel_sk, &self.sketch_ses) => {
+                self.tools.tool.construction = !self.tools.tool.construction;
+            }
             _ => {}
         }
     }
@@ -39,7 +41,6 @@ impl App {
 // impossible: the phases had neither names nor boundaries.
 impl App {
     /// THE FLAT SKETCH VIEWPORT: panning and zooming, the drawing tools, picking entities, drawing.
-    #[allow(clippy::too_many_arguments)]
     pub(super) fn viewport_2d(&mut self, ctx: &egui::Context, resp: &egui::Response, painter: &egui::Painter, rect: Rect, has_geom: bool, scroll: f32) {
         if !self.viewing.view.initialized && has_geom {
             qymcad_ui_state::fit(&self.project, &mut self.viewing.view, rect);
@@ -251,7 +252,6 @@ impl App {
     /// read (`sketch_drag_start` -> `sketch_drag_update` -> `sketch_click`), so drawing decides nothing and
     /// picks nothing - it only shows what was decided. While everything lay in one body, drawing and reading
     /// the input were mixed together, and "showing" easily turned into "deciding".
-    #[allow(clippy::too_many_arguments)]
     pub(super) fn draw_sketch_viewport(&mut self, ctx: &egui::Context, resp: &egui::Response, painter: &egui::Painter, rect: Rect, handle: Option<qymcad_core::geom::Point2>) {
         let sh = qymcad_ui_state::Sheet { view: self.viewing.view, rect };
         qymcad_render::draw_axes(&self.painting(), painter, rect);

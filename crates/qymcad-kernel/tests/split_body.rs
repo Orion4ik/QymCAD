@@ -87,3 +87,16 @@ fn face_by_normal(s: &Shape, n: [f64; 3]) -> Option<u32> {
     let qymcad_core::geom::Built { faces, .. } = bodies.first()?;
     faces.iter().find(|f| f.normal[0] * n[0] + f.normal[1] * n[1] + f.normal[2] * n[2] > 0.9).map(|f| f.id)
 }
+
+/// The pieces of a split body share the cut face; separate bodies share nothing.
+#[test]
+fn split_pieces_share_subshapes_separate_bodies_do_not() {
+    let c1 = cube();
+    let c2 = cube();
+    assert!(!c1.shares(&c2), "two independently constructed cubes do not share sub-shapes");
+
+    let parts = c1.split_by_plane([0.0, 0.0, 10.0], [0.0, 0.0, 1.0], 0).expect("the body was split");
+    assert_eq!(parts.len(), 2);
+    assert!(parts[0].shares(&parts[1]), "the two halves of a split body share the cut face");
+    assert!(!parts[0].shares(&c2), "a piece of a split body shares nothing with an independent body");
+}

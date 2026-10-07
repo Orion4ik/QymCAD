@@ -8,6 +8,7 @@
 use qymcad_core::feature::Purpose;
 use qymcad_core::geom::Point2;
 use qymcad_core::model::{Constraint, EntityKind, Project};
+use qymcad_core::solver::DragPull2d;
 
 /// The three ways a rectangle is drawn: two corners, a centre and a corner, three points (turned by 30 deg).
 fn drawn(way: usize) -> (Project, usize) {
@@ -98,7 +99,7 @@ fn a_dragged_corner_changes_the_size_and_not_the_turn() {
         let before = shape(&p, si);
         let corner = p.sketches[si].rects[0].corners[2];
         let (x, y) = xy(&p, si, corner);
-        p.solve_sketch_drag(si, Some((corner, x + 7.0, y + 3.0)));
+        p.solve_sketch_drag(si, Some(DragPull2d::new(corner, x + 7.0, y + 3.0)));
         p.solve_sketch(si);
         let after = shape(&p, si);
         if (after.turn - before.turn).abs() > 1e-6 || after.off_square.abs() > 1e-6 {
@@ -156,7 +157,7 @@ fn a_rectangle_grows_from_where_it_was_drawn() {
     let (mut p, si) = drawn(1);
     let r = p.sketches[si].rects[0].clone();
     let (x, y) = xy(&p, si, r.corners[2]);
-    p.solve_sketch_drag(si, Some((r.corners[2], x + 6.0, y + 4.0)));
+    p.solve_sketch_drag(si, Some(DragPull2d::new(r.corners[2], x + 6.0, y + 4.0)));
     p.solve_sketch(si);
     let m = xy(&p, si, r.centre);
     if (m.0 - 30.0).hypot(m.1 - 25.0) > 1e-6 {
@@ -202,7 +203,7 @@ fn a_dragged_corner_stretches_from_the_corner_across() {
     let (dragged, across) = (id(&p, 40.0, 30.0), id(&p, 0.0, 0.0));
     for k in 1..=10 {
         let t = k as f64 / 10.0;
-        p.solve_sketch_drag_fast(si, Some((dragged, 40.0 + 8.0 * t, 30.0 + 8.0 * t)));
+        p.solve_sketch_drag_fast(si, Some(DragPull2d::new(dragged, 40.0 + 8.0 * t, 30.0 + 8.0 * t)));
     }
     p.solve_sketch(si);
     let (a, d) = (xy(&p, si, across), xy(&p, si, dragged));
@@ -222,7 +223,7 @@ fn a_rectangle_dragged_by_its_centre_goes_as_a_whole() {
         let m = xy(&p, si, r.centre);
         for k in 1..=10 {
             let t = k as f64 / 10.0;
-            p.solve_sketch_drag_fast(si, Some((r.centre, m.0 + 12.0 * t, m.1 + 6.0 * t)));
+            p.solve_sketch_drag_fast(si, Some(DragPull2d::new(r.centre, m.0 + 12.0 * t, m.1 + 6.0 * t)));
         }
         p.solve_sketch(si);
         let after: Vec<(f64, f64)> = r.corners.iter().map(|c| xy(&p, si, *c)).collect();
@@ -270,7 +271,7 @@ fn an_angle_dimension_on_a_side_turns_the_rectangle() {
     let before = shape(&p, si).turn;
     let corner = p.sketches[si].rects[0].corners[2];
     let (x, y) = xy(&p, si, corner);
-    p.solve_sketch_drag(si, Some((corner, x + 5.0, y - 9.0)));
+    p.solve_sketch_drag(si, Some(DragPull2d::new(corner, x + 5.0, y - 9.0)));
     p.solve_sketch(si);
     let after = shape(&p, si).turn;
     if held != 4 || (after - before).abs() > 1e-6 {

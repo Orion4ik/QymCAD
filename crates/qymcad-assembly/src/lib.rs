@@ -1625,7 +1625,7 @@ pub fn joint_giz_drag_to(jc: &mut qymcad_ui_state::JointCtx, cursor: Pos2, d: eg
             return;
         }
         let to_world = qymcad_core::feature::apply12(&jc.project.world_transform(ctx), to);
-        jc.project.drag_pull = Some((comp, local, to_world));
+        jc.project.drag_pull = Some(qymcad_core::model::DragPull::new(comp, local, to_world));
         jc.project.solve_joints();
         jc.project.drag_pull = None;
         qymcad_ui_state::invalidate_placement(jc.regen);
