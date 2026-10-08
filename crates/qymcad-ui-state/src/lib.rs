@@ -283,12 +283,14 @@ pub enum WinKind {
     PartsLibrary,
     /// What the check for a newer version came to (Help -> Check for updates).
     Updates,
+    /// The AI Copilot & MCP Agent chat/connection window.
+    McpAgent,
 }
 
 impl WinKind {
     /// EVERY KIND, so that a walk over the windows cannot silently miss one added later. A guard checks that the
     /// count here matches the number of variants declared above.
-    pub const ALL: [WinKind; 11] = [
+    pub const ALL: [WinKind; 12] = [
         WinKind::SaveTemplate,
         WinKind::Start,
         WinKind::DocProps,
@@ -300,6 +302,7 @@ impl WinKind {
         WinKind::Settings,
         WinKind::PartsLibrary,
         WinKind::Updates,
+        WinKind::McpAgent,
     ];
 }
 
@@ -333,6 +336,12 @@ pub struct Windows {
     pub constraints: bool,
     /// A file just read, waiting for its units and scale (see `ImportScale`).
     pub import_scale: Option<ImportScale>,
+    /// AI Copilot & MCP Agent UI state: chat input, message history (is_user, text), tab, etc.
+    pub mcp_chat_input: String,
+    pub mcp_chat_history: Vec<(bool, String)>,
+    pub mcp_active_tab: usize,
+    pub mcp_server_running: bool,
+    pub mcp_transactions: Vec<String>,
 }
 
 impl Windows {

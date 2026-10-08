@@ -60,7 +60,7 @@ pub fn parse_natural_language_intent(prompt: &str) -> Option<CadCommand> {
 
     // 7. Mass properties
     if text.contains("mass") || text.contains("weight") || text.contains("center of mass") {
-        return Some(CadCommand::CalculateMassProperties { body_id: 1 });
+        return Some(CadCommand::CalculateMassProperties { body_id: 1, material_id: None });
     }
 
     // 8. DFM / Printability check
@@ -71,7 +71,7 @@ pub fn parse_natural_language_intent(prompt: &str) -> Option<CadCommand> {
     // 9. Cost estimation
     if text.contains("cost") || text.contains("price") || text.contains("estimate") {
         let qty = extract_first_number(&text).map(|n| n as u32).unwrap_or(1);
-        return Some(CadCommand::EstimateCost { body_id: 1, cycle_time_hours: 1.5, quantity: qty });
+        return Some(CadCommand::EstimateCost { body_id: 1, cycle_time_hours: 1.5, quantity: qty, material_id: None });
     }
 
     // 10. OpenSubdiv / Subdivision

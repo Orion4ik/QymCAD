@@ -1697,6 +1697,7 @@ props-delete-axis = Delete the axis
 win-params = Parameters
 win-add-param = Add a parameter
 win-settings = Settings
+win-mcp-agent = AI Copilot & MCP Agent
 win-about = About
 win-parts-library = Parts library
 win-refresh = Refresh

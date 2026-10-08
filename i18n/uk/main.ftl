@@ -1691,6 +1691,7 @@ props-delete-axis = Видалити вісь
 win-params = Параметри
 win-add-param = Додати параметр
 win-settings = Налаштування
+win-mcp-agent = AI Copilot & MCP Агент
 win-about = Про програму
 win-parts-library = Бібліотека виробів
 win-refresh = Оновити

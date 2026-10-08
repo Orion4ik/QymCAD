@@ -194,6 +194,10 @@ pub(crate) fn menu_bar(bc: &mut qymcad_ui_state::BarCtx, ui: &mut egui::Ui) {
         });
         ui.bar_menu_button(qymcad_i18n::tr("menu-windows"), |ui| {
             ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);
+            if ui.button(format!("{}  {}", ph::ROBOT, qymcad_i18n::tr("win-mcp-agent"))).clicked() {
+                bc.win.toggle(WinKind::McpAgent);
+                ui.close();
+            }
             if ui.button(format!("{}  {}", ph::GEAR, qymcad_i18n::tr("win-settings"))).clicked() {
                 bc.win.toggle(WinKind::Settings);
                 ui.close();

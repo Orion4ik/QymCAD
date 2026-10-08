@@ -7,7 +7,7 @@ pub mod transaction;
 
 pub use commands::{CadCommand, CommandResponse, PrimitiveKind};
 pub use copilot::parse_natural_language_intent;
-pub use mcp::{dispatch_mcp_tool_call, get_mcp_tool_definitions, McpCallRequest, McpCallResponse, McpToolDefinition};
+pub use mcp::{dispatch_mcp_tool_call, get_mcp_tool_definitions, handle_jsonrpc_message, McpCallRequest, McpCallResponse, McpServer, McpToolDefinition};
 pub use transaction::execute_transaction;
 
 #[cfg(test)]
@@ -27,7 +27,7 @@ mod tests {
         // 2. Transaction execution
         let resp = execute_transaction(&mut project, &cmd, &materials, "copilot_tx_1");
         assert!(resp.success);
-        assert!(!project.sketches.is_empty());
+        assert!(!project.timeline.is_empty());
 
         // 3. MCP tool call for material assignment
         let mcp_call = McpCallRequest {

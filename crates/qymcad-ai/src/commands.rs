@@ -18,6 +18,7 @@ pub enum CadCommand {
         /// Dimensions in millimeters [X, Y, Z] or [radius, height].
         dimensions: Vec<f64>,
         /// Optional location offset [X, Y, Z].
+        #[serde(default)]
         position: Option<[f64; 3]>,
     },
     /// Creates a 2D sketch plane.
@@ -57,6 +58,7 @@ pub enum CadCommand {
         /// Extrusion distance in mm.
         distance: f64,
         /// Extrude symmetrically about sketch plane.
+        #[serde(default)]
         symmetric: bool,
     },
     /// Applies a constant-radius fillet to body edges.
@@ -88,12 +90,16 @@ pub enum CadCommand {
     CalculateMassProperties {
         /// Target body ID.
         body_id: u64,
+        /// Optional material ID override.
+        #[serde(default)]
+        material_id: Option<String>,
     },
     /// Runs Design For Manufacturing (DFM) analysis.
     AnalyzeDfm {
         /// Target body ID.
         body_id: u64,
         /// Manufacturing process ("fdm", "cnc", "sla").
+        #[serde(default = "default_dfm_process")]
         process: String,
     },
     /// Estimates full manufacturing cost (material, machine, energy, labor).
@@ -104,6 +110,9 @@ pub enum CadCommand {
         cycle_time_hours: f64,
         /// Production batch quantity.
         quantity: u32,
+        /// Optional material ID override.
+        #[serde(default)]
+        material_id: Option<String>,
     },
     /// Performs OpenSubdiv Catmull-Clark subdivision with optional edge crease sharpness.
     SubdivideMesh {
@@ -112,8 +121,13 @@ pub enum CadCommand {
         /// Number of subdivision refinement steps (1..4).
         levels: usize,
         /// Optional crease sharpness to apply across cage edges.
+        #[serde(default)]
         crease_sharpness: Option<f64>,
     },
+}
+
+fn default_dfm_process() -> String {
+    "fdm".into()
 }
 
 /// Solid primitive geometry kinds.

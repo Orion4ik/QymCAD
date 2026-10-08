@@ -1695,6 +1695,7 @@ props-delete-axis = Осьті жою
 win-params = Параметрлер
 win-add-param = Параметр қосу
 win-settings = Баптаулар
+win-mcp-agent = AI Copilot & MCP Агенті
 win-about = Бағдарлама туралы
 win-parts-library = Бұйымдар кітапханасы
 win-refresh = Жаңарту

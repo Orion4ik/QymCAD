@@ -44,6 +44,9 @@ bottom says what is happening, how many degrees of freedom the sketch has and wh
 - [The history timeline and rollback](general/03-timeline) — why a model is a recipe, not a picture.
 - [Keyboard shortcuts](general/10-hotkeys) — the full reference and how to reassign them.
 - [Report a problem](general/13-report) — something does not work: how to tell about it.
+- [Materials and manufacturing](general/15-materials-and-manufacturing) — physical properties, DFM, 3D printing and costing.
+- [Automation and AI](general/16-ai-and-mcp) — natural language assistance and Model Context Protocol.
+- [Subdivision surfaces](part/28-subdivision) — freeform modeling with semi-sharp creases.
 - [Updates](general/14-updates) — how to learn about a new version, and what goes over the network.
 
 **F1** at any moment opens the article about what you are doing right now, not the contents page.
