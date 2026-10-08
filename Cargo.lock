@@ -3145,6 +3145,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "qymcad-ai"
+version = "0.1.0"
+dependencies = [
+ "qymcad-core",
+ "qymcad-manufacturing",
+ "qymcad-materials",
+ "ron",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "qymcad-assembly"
 version = "0.1.0"
 dependencies = [
@@ -3211,6 +3223,25 @@ dependencies = [
  "cc",
  "qymcad-core",
  "qymcad-meshfit",
+]
+
+[[package]]
+name = "qymcad-manufacturing"
+version = "0.1.0"
+dependencies = [
+ "qymcad-core",
+ "qymcad-materials",
+ "ron",
+ "serde",
+]
+
+[[package]]
+name = "qymcad-materials"
+version = "0.1.0"
+dependencies = [
+ "qymcad-core",
+ "ron",
+ "serde",
 ]
 
 [[package]]

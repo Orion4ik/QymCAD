@@ -88,13 +88,7 @@ mod tests {
 
         let gizmo = qymcad_ui_state::edge_radius_geometry(&app.painting()).expect("gizmo should exist");
         let scr = qymcad_ui_state::Screen { cam: &app.viewing.cam, set: &app.set, rect: r, basis: &basis };
-        qymcad_ui_state::edge_radius_drag_to(
-            gizmo,
-            &scr,
-            &mut app.tools.cmd,
-            &mut app.regen,
-            egui::vec2(20.0, -20.0),
-        );
+        qymcad_ui_state::edge_radius_drag_to(gizmo, &scr, &mut app.tools.cmd, &mut app.regen, egui::vec2(20.0, -20.0));
         let after = qymcad_ui_state::cmd_val(&app.tools.cmd, "radius");
         assert!((after - before).abs() > 0.01, "dragging handle must change the radius: before {before}, after {after}");
 

@@ -3731,7 +3731,7 @@ pub fn draw_face_arrow(pn: &Painting, painter: &egui::Painter, rect: Rect, basis
         painter.add(egui::Shape::convex_polygon(vec![b, p1, p2], col, Stroke::NONE));
     }
 
-    if let Some(key) = qymcad_ui_state::face_arrow_key(&pn.armed) {
+    if let Some(key) = qymcad_ui_state::face_arrow_key(pn.armed) {
         let val = qymcad_ui_state::cmd_val(pn.cmd, key);
         let label = format!("{:.2} mm", val);
         let font_id = egui::FontId::monospace(11.0);
@@ -3743,12 +3743,7 @@ pub fn draw_face_arrow(pn: &Painting, painter: &egui::Painter, rect: Rect, basis
 }
 
 /// The radius/chamfer handle at a selected edge: an arc ring and a knob with numeric readout.
-pub fn draw_edge_radius_handle(
-    pn: &Painting,
-    painter: &egui::Painter,
-    rect: Rect,
-    basis: &([f64; 3], [f64; 3], [f64; 3]),
-) {
+pub fn draw_edge_radius_handle(pn: &Painting, painter: &egui::Painter, rect: Rect, basis: &([f64; 3], [f64; 3], [f64; 3])) {
     let Some(gizmo) = qymcad_ui_state::edge_radius_geometry(pn) else { return };
     let scr = qymcad_ui_state::Screen { cam: &pn.cam, set: pn.set, rect, basis };
     let s_orig = scr.at(gizmo.origin).0;

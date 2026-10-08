@@ -19,6 +19,9 @@ members = [
     "crates/qymcad-testkit",
     "crates/qymcad-update",
     "crates/qymcad-meshfit",
+    "crates/qymcad-materials",
+    "crates/qymcad-manufacturing",
+    "crates/qymcad-ai",
     "crates/qymcad-acceptance",
 ]
 
@@ -75,6 +78,9 @@ readme = "README.md"
 qymcad-core = { path = "crates/qymcad-core" }
 qymcad-kernel = { path = "crates/qymcad-kernel" }
 qymcad-meshfit = { path = "crates/qymcad-meshfit" }
+qymcad-materials = { path = "crates/qymcad-materials" }
+qymcad-manufacturing = { path = "crates/qymcad-manufacturing" }
+qymcad-ai = { path = "crates/qymcad-ai" }
 qymcad-io = { path = "crates/qymcad-io" }
 
 # --- external (wired in per crate as each phase starts) ---

@@ -9207,20 +9207,9 @@ pub fn edge_radius_geometry(pn: &Painting) -> Option<EdgeRadiusGizmo> {
     }
 
     let m = poly.len() / 2;
-    let (p0, p1) = if poly.len() == 2 {
-        (poly[0], poly[1])
-    } else {
-        (poly[m - 1], poly[m])
-    };
-    let mid_loc = [
-        (p0[0] as f64 + p1[0] as f64) * 0.5,
-        (p0[1] as f64 + p1[1] as f64) * 0.5,
-        (p0[2] as f64 + p1[2] as f64) * 0.5,
-    ];
-    let tan_loc = v_sub(
-        [p1[0] as f64, p1[1] as f64, p1[2] as f64],
-        [p0[0] as f64, p0[1] as f64, p0[2] as f64],
-    );
+    let (p0, p1) = if poly.len() == 2 { (poly[0], poly[1]) } else { (poly[m - 1], poly[m]) };
+    let mid_loc = [(p0[0] as f64 + p1[0] as f64) * 0.5, (p0[1] as f64 + p1[1] as f64) * 0.5, (p0[2] as f64 + p1[2] as f64) * 0.5];
+    let tan_loc = v_sub([p1[0] as f64, p1[1] as f64, p1[2] as f64], [p0[0] as f64, p0[1] as f64, p0[2] as f64]);
 
     let wt = pn.project.body_display_transform(body, current_ctx_id(pn.active_path, pn.project));
     let origin = qymcad_core::feature::apply12(&wt, mid_loc);
@@ -9245,48 +9234,21 @@ pub fn edge_radius_geometry(pn: &Painting) -> Option<EdgeRadiusGizmo> {
 
     let val = cmd_val(pn.cmd, param_key);
     let disp_r = if val > 0.05 { val } else { 2.0 };
-    let tip = [
-        origin[0] + normal[0] * disp_r,
-        origin[1] + normal[1] * disp_r,
-        origin[2] + normal[2] * disp_r,
-    ];
+    let tip = [origin[0] + normal[0] * disp_r, origin[1] + normal[1] * disp_r, origin[2] + normal[2] * disp_r];
 
-    Some(EdgeRadiusGizmo {
-        origin,
-        normal,
-        binormal,
-        tangent: tan_w,
-        radius: val,
-        tip,
-        param_key,
-    })
+    Some(EdgeRadiusGizmo { origin, normal, binormal, tangent: tan_w, radius: val, tip, param_key })
 }
 
-pub fn edge_handle_hit(
-    pn: &Painting,
-    rect: Rect,
-    pos: Pos2,
-    basis: &([f64; 3], [f64; 3], [f64; 3]),
-) -> bool {
+pub fn edge_handle_hit(pn: &Painting, rect: Rect, pos: Pos2, basis: &([f64; 3], [f64; 3], [f64; 3])) -> bool {
     let Some(gizmo) = edge_radius_geometry(pn) else { return false };
     let scr = Screen { cam: &pn.cam, set: pn.set, rect, basis };
     let (s_origin, s_tip) = (scr.at(gizmo.origin).0, scr.at(gizmo.tip).0);
     s_tip.distance(pos) <= 14.0 || screen_dist_seg(pos, s_origin, s_tip) <= 8.0
 }
 
-pub fn edge_radius_drag_to(
-    gizmo: EdgeRadiusGizmo,
-    scr: &Screen,
-    cmd: &mut FeatCommand,
-    regen: &mut Rebuilding,
-    d: egui::Vec2,
-) {
+pub fn edge_radius_drag_to(gizmo: EdgeRadiusGizmo, scr: &Screen, cmd: &mut FeatCommand, regen: &mut Rebuilding, d: egui::Vec2) {
     let s0 = scr.at(gizmo.origin).0;
-    let s1 = scr.at([
-        gizmo.origin[0] + gizmo.normal[0] * 10.0,
-        gizmo.origin[1] + gizmo.normal[1] * 10.0,
-        gizmo.origin[2] + gizmo.normal[2] * 10.0,
-    ]).0;
+    let s1 = scr.at([gizmo.origin[0] + gizmo.normal[0] * 10.0, gizmo.origin[1] + gizmo.normal[1] * 10.0, gizmo.origin[2] + gizmo.normal[2] * 10.0]).0;
     let pd = s1 - s0;
     let denom = (pd.x * pd.x + pd.y * pd.y) as f64;
     if denom < 1e-6 {

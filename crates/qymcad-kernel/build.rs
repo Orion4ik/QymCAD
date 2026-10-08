@@ -24,12 +24,24 @@ fn main() {
                     return p.into();
                 }
             }
+        } else if target_os == "windows" {
+            for p in ["C:/occt/opencascade-7.9.3-vc14-64/inc", "C:/occt/include/opencascade", "C:/occt/inc"] {
+                if std::path::Path::new(p).exists() {
+                    return p.into();
+                }
+            }
         }
         "/usr/include/opencascade".into()
     });
     let libdir = env::var("OCCT_LIB_DIR").unwrap_or_else(|_| {
         if target_os == "macos" {
             for p in ["/opt/homebrew/lib", "/usr/local/lib", "/opt/homebrew/opt/opencascade/lib"] {
+                if std::path::Path::new(p).exists() {
+                    return p.into();
+                }
+            }
+        } else if target_os == "windows" {
+            for p in ["C:/occt/opencascade-7.9.3-vc14-64/win64/vc14/lib", "C:/occt/lib", "C:/occt/win64/vc14/lib"] {
                 if std::path::Path::new(p).exists() {
                     return p.into();
                 }

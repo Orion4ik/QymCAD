@@ -323,13 +323,7 @@ impl App {
             if resp.dragged() {
                 if let Some(gizmo) = qymcad_ui_state::edge_radius_geometry(&self.painting()) {
                     let scr = qymcad_ui_state::Screen { cam: &self.viewing.cam, set: &self.set, rect, basis: basis3 };
-                    qymcad_ui_state::edge_radius_drag_to(
-                        gizmo,
-                        &scr,
-                        &mut self.tools.cmd,
-                        &mut self.regen,
-                        resp.drag_delta(),
-                    );
+                    qymcad_ui_state::edge_radius_drag_to(gizmo, &scr, &mut self.tools.cmd, &mut self.regen, resp.drag_delta());
                 }
             }
             if resp.drag_stopped() {

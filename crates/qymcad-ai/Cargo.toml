@@ -1,0 +1,20 @@
+[package]
+name = "qymcad-ai"
+edition.workspace = true
+version.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "AI-native engineering layer, CAD Copilot agent, command transactions, and Model Context Protocol (MCP) tool server"
+
+[dependencies]
+qymcad-core.workspace = true
+qymcad-materials = { path = "../qymcad-materials" }
+qymcad-manufacturing = { path = "../qymcad-manufacturing" }
+serde.workspace = true
+serde_json = "1.0.151"
+ron.workspace = true
+
+[lints]
+workspace = true

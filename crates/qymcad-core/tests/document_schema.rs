@@ -13,10 +13,11 @@
 /// The field names of a struct, read from the source. A crude parse, but exact for the declaration style used
 /// here.
 fn fields_of(src: &str, decl: &str) -> Vec<String> {
-    let a = src.find(decl).unwrap_or_else(|| panic!("the struct {decl} was not found"));
-    let b = src[a..].find("\n}\n").map(|i| a + i).unwrap_or(src.len());
+    let src_clean = src.replace('\r', "");
+    let a = src_clean.find(decl).unwrap_or_else(|| panic!("the struct {decl} was not found"));
+    let b = src_clean[a..].find("\n}\n").map(|i| a + i).unwrap_or(src_clean.len());
     let mut out = Vec::new();
-    for line in src[a..b].lines() {
+    for line in src_clean[a..b].lines() {
         let t = line.trim();
         if !t.starts_with("pub ") || t.starts_with("pub fn") {
             continue;
@@ -43,6 +44,7 @@ fn every_document_field_is_either_in_the_file_or_named_here() {
     // Not stored, each for its own reason. The list is deliberately short: it is the one place that shows what
     // the program keeps in memory rather than in the file.
     let derived: &[(&str, &str)] = &[
+        ("auto_constrain", "user preference: lives in settings, not in the document"),
         ("regen_faces", "derived: the faces come from the B-rep during a rebuild"),
         ("regen_edges", "derived: the edges come from the B-rep during a rebuild"),
         ("regen_errors", "derived: the errors of the last rebuild"),
