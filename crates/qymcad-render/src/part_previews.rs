@@ -274,16 +274,35 @@ pub fn draw_hole_preview(pn: &Painting, painter: &egui::Painter, rect: Rect) {
     let frames: Vec<[f64; 12]> = if pn.hole.mode == 1 {
         pn.hole.sketch.map(|sid| pn.project.sketch_hole_points(sid, pn.hole.flip)).unwrap_or_default()
     } else {
-        let qymcad_ui_state::Sel::Face(mi, fi) = pn.sel else { return };
+        let Some(target) = qymcad_ui_state::hole_face_indices(pn) else { return };
+        let (mi, fi) = (target.mesh_idx, target.face_idx);
         let (Some(body), Some(face)) = (pn.project.mesh_id(mi), pn.project.bodies.get(mi).and_then(|b| b.faces.get(fi))) else { return };
         let wt = pn.project.body_display_transform(body, qymcad_ui_state::current_ctx_id(pn.active_path, pn.project));
-        let pl = qymcad_core::feature::PlaneFrame::from_origin_normal([face.centroid.x, face.centroid.y, face.centroid.z], face.normal, 0.0).matrix12();
+        let c = [face.centroid.x, face.centroid.y, face.centroid.z];
+        let frame = qymcad_core::feature::PlaneFrame::from_origin_normal(c, face.normal, 0.0);
+        let (u, v) = (v("off_u"), v("off_v"));
+        let origin = [c[0] + frame.x[0] * u + frame.y[0] * v, c[1] + frame.x[1] * u + frame.y[1] * v, c[2] + frame.x[2] * u + frame.y[2] * v];
+        let pl = qymcad_core::feature::PlaneFrame { origin, x: frame.x, y: frame.y }.matrix12();
         vec![qymcad_core::feature::compose12(&wt, &pl)]
     };
     let basis = pn.cam.basis();
     let scr = qymcad_ui_state::Screen { cam: &pn.cam, set: pn.set, rect, basis: &basis };
     let col = qymcad_scheme::a(pn.scheme.pal.preview(), 220);
+    let ghost_col = qymcad_scheme::a(pn.scheme.pal.error_mild(), 60);
     for pl in &frames {
+        let r = (tool.diameter / 2.0).max(0.1);
+        let d = tool.depth.abs().max(0.1);
+        let num_seg = 24;
+        let at = |radius: f64, a: f64, z: f64| scr.at(qymcad_core::feature::apply12(pl, [radius * a.cos(), radius * a.sin(), z])).0;
+        for i in 0..num_seg {
+            let a0 = std::f64::consts::TAU * i as f64 / num_seg as f64;
+            let a1 = std::f64::consts::TAU * (i + 1) as f64 / num_seg as f64;
+            let p0 = at(r, a0, 0.0);
+            let p1 = at(r, a1, 0.0);
+            let p2 = at(r, a1, -d);
+            let p3 = at(r, a0, -d);
+            painter.add(egui::Shape::convex_polygon(vec![p0, p1, p2, p3], ghost_col, Stroke::NONE));
+        }
         for line in qymcad_ui_state::hole_outline(pl, tool) {
             painter.add(egui::Shape::line(line.iter().map(|p| scr.at(*p).0).collect(), Stroke::new(1.5, col)));
         }

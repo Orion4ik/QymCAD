@@ -318,12 +318,23 @@ impl Project {
                 Err(_) if picked => crate::feature::KernelJob::refused(crate::errors::CoreError::FaceNotFound),
                 resolved => {
                     // THE HOLE STANDS WHERE IT WAS PLACED: the stored point brought onto the face as it stands now
-                    // (along its normal), not the face's centre - two holes in one face stood in each other, the
-                    // second green and drilling nothing. A hole placed before holds the centre it was given then.
+                    // (along its normal), or evaluated from parametric off_u and off_v dimensions relative to the face frame.
                     let (point, normal) = match resolved {
                         Ok(c) => {
-                            let off = (0..3).map(|i| (point[i] - c.centroid[i]) * c.normal[i]).sum::<f64>();
-                            ([point[0] - off * c.normal[0], point[1] - off * c.normal[1], point[2] - off * c.normal[2]], c.normal)
+                            let off_u_present = p.dims.and_then(|m| m.get("off_u")).is_some_and(|e| !e.trim().is_empty());
+                            let off_v_present = p.dims.and_then(|m| m.get("off_v")).is_some_and(|e| !e.trim().is_empty());
+                            if off_u_present || off_v_present {
+                                let f = crate::feature::PlaneFrame::from_origin_normal(c.centroid, c.normal, 0.0);
+                                let d = [point[0] - c.centroid[0], point[1] - c.centroid[1], point[2] - c.centroid[2]];
+                                let cur_u = f.x[0] * d[0] + f.x[1] * d[1] + f.x[2] * d[2];
+                                let cur_v = f.y[0] * d[0] + f.y[1] * d[1] + f.y[2] * d[2];
+                                let u = p.dim("off_u", cur_u);
+                                let v = p.dim("off_v", cur_v);
+                                ([c.centroid[0] + f.x[0] * u + f.y[0] * v, c.centroid[1] + f.x[1] * u + f.y[1] * v, c.centroid[2] + f.x[2] * u + f.y[2] * v], c.normal)
+                            } else {
+                                let off = (0..3).map(|i| (point[i] - c.centroid[i]) * c.normal[i]).sum::<f64>();
+                                ([point[0] - off * c.normal[0], point[1] - off * c.normal[1], point[2] - off * c.normal[2]], c.normal)
+                            }
                         }
                         Err(_) => (point, normal),
                     };

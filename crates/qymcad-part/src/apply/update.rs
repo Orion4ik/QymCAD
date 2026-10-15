@@ -184,7 +184,12 @@ pub fn update_feat(pc: &mut qymcad_ui_state::PartCtx, fid: Id) -> Option<Id> {
             let k = qymcad_core::feature::FaceKey { index: fi as u32, centroid: [face.centroid.x, face.centroid.y, face.centroid.z], normal: face.normal, id: face.id };
             (k, hole_centre(k.centroid, k.normal, qymcad_ui_state::cmd_val(pc.cmd, "off_u"), qymcad_ui_state::cmd_val(pc.cmd, "off_v")), k.normal)
         }),
-        _ => None,
+        _ => qymcad_ui_state::hole_face_indices_from(*pc.sel, &*pc.project, &*pc.gsel, pc.cmd.edit).and_then(|t| {
+            pc.project.bodies.get(t.mesh_idx).and_then(|b| b.faces.get(t.face_idx)).map(|face| {
+                let k = qymcad_core::feature::FaceKey { index: t.face_idx as u32, centroid: [face.centroid.x, face.centroid.y, face.centroid.z], normal: face.normal, id: face.id };
+                (k, hole_centre(k.centroid, k.normal, qymcad_ui_state::cmd_val(pc.cmd, "off_u"), qymcad_ui_state::cmd_val(pc.cmd, "off_v")), k.normal)
+            })
+        }),
     };
     let reach = qymcad_ui_state::cmd_reach(pc.cmd, *pc.feat);
     let down = if pc.cmd.extent.two_sided() { qymcad_ui_state::cmd_val(pc.cmd, "down").abs() } else { 0.0 };
@@ -420,9 +425,16 @@ pub fn update_feat(pc: &mut qymcad_ui_state::PartCtx, fid: Id) -> Option<Id> {
                 if let Some((k, p, nrm)) = hole_face {
                     // editing the face recomputes the reference to it along with the centre and the normal
                     // of the hole. A hand pick is a query of `Id`: one particular face was pointed at.
-                    *face = qymcad_core::refs::Ref::one(k.id, qymcad_core::refs::Fingerprint { centroid: k.centroid, normal: k.normal });
+                    if matches!(*pc.sel, qymcad_ui_state::Sel::Face(..)) || face.query == qymcad_core::refs::Query::Id(0) {
+                        *face = qymcad_core::refs::Ref::one(k.id, qymcad_core::refs::Fingerprint { centroid: k.centroid, normal: k.normal });
+                    }
                     *point = p;
                     *normal = nrm;
+                } else if !matches!(face.query, qymcad_core::refs::Query::Id(0)) {
+                    let u = qymcad_ui_state::cmd_val(pc.cmd, "off_u");
+                    let v = qymcad_ui_state::cmd_val(pc.cmd, "off_v");
+                    *point = hole_centre(face.hint.centroid, face.hint.normal, u, v);
+                    *normal = face.hint.normal;
                 }
             }
             FeatureKind::Thread { spec, length, lead_in, lead_out, .. } => {

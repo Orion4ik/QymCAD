@@ -184,6 +184,27 @@ pub fn draw_face_arrow(pn: &Painting, painter: &egui::Painter, rect: Rect, basis
         let col = if hot { pn.scheme.pal.highlight() } else { pn.scheme.pal.handle_face() };
         painter.add(egui::Shape::line_segment([a, b], Stroke::new(if hot { 3.5 } else { 2.5 }, col)));
         painter.circle_filled(b, if hot { 6.0 } else { 5.0 }, col);
+
+        // Arrowhead and value readout
+        let delta = b - a;
+        let len = delta.length();
+        if len > 8.0 {
+            let dir = delta / len;
+            let perp = egui::vec2(-dir.y, dir.x);
+            let w1 = b - dir * 8.0 + perp * 4.0;
+            let w2 = b - dir * 8.0 - perp * 4.0;
+            painter.add(egui::Shape::line_segment([b, w1], Stroke::new(if hot { 2.5 } else { 1.8 }, col)));
+            painter.add(egui::Shape::line_segment([b, w2], Stroke::new(if hot { 2.5 } else { 1.8 }, col)));
+        }
+        if arrow.key == "diameter" {
+            let dia = qymcad_ui_state::cmd_val(pn.cmd, "diameter");
+            let r = (dia / 2.0).max(0.01);
+            let center_w = [arrow.base[0] - arrow.dir[0] * r, arrow.base[1] - arrow.dir[1] * r, arrow.base[2] - arrow.dir[2] * r];
+            let c_screen = scr.at(center_w).0;
+            painter.add(egui::Shape::line_segment([c_screen, a], Stroke::new(if hot { 1.8 } else { 1.2 }, qymcad_scheme::a(col, 160))));
+        }
+        let txt = if arrow.key == "diameter" { format!("Ø {:.1} mm", qymcad_ui_state::cmd_val(pn.cmd, "diameter")) } else { format!("{:.1} mm", arrow.len.abs()) };
+        painter.text(b + egui::vec2(10.0, -10.0), egui::Align2::LEFT_BOTTOM, txt, egui::FontId::proportional(12.0), col);
     }
     qymcad_ui_state::remember_handles(painter.ctx(), qymcad_ui_state::handles_screen_rect(&hs, &scr));
 }

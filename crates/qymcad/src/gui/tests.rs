@@ -54,3 +54,6 @@ mod nothing_changed_rebuilds_nothing;
 
 #[cfg(test)]
 mod a_hinge_follows_its_parameter;
+
+#[cfg(test)]
+mod hole_manipulator_flow;

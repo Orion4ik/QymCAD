@@ -285,7 +285,8 @@ pub(crate) fn draw_3d(pn: &Painting, painter: &egui::Painter, rect: Rect) {
                     painter.circle_stroke(sc, rp.max(2.0), Stroke::new(1.5, col));
                 }
             }
-        } else if let Sel::Face(mi, fi) = pn.sel {
+        } else if let Some(target) = qymcad_ui_state::hole_face_indices(pn) {
+            let (mi, fi) = (target.mesh_idx, target.face_idx);
             if let (Some(face), Some(mesh)) = (pn.project.bodies.get(mi).and_then(|b| b.faces.get(fi)), pn.project.bodies.get(mi).map(|b| &b.mesh)) {
                 fill_face(painter, face, mesh);
             }

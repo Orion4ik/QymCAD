@@ -294,19 +294,26 @@ pub fn start_feat_cmd_edit(pc: &mut qymcad_ui_state::PartCtx, fid: Id) {
                 if let Some(si) = pc.project.sketch_index(sketch) {
                     *pc.sel = qymcad_ui_state::Sel::Sketch(si);
                 }
-            } else if let Some((mi, fi)) =
-                face_desc_of(&face).and_then(|d| qymcad_pick::resolve_face_sel(&*pc.project, src, &qymcad_core::feature::FaceKey { index: 0, centroid: [0.0; 3], normal: [0.0, 0.0, 1.0], id: d }))
-            {
-                // restore THE FACE SELECTION by its persistent `FaceKey`, then highlight it
-                *pc.sel = qymcad_ui_state::Sel::Face(mi, fi);
+            } else {
+                pc.gsel.faces = live_picks(&*pc.project, src, &face, true);
+                pc.gsel.faces_body = Some(src);
+                if let Some((mi, fi)) =
+                    face_desc_of(&face).and_then(|d| qymcad_pick::resolve_face_sel(&*pc.project, src, &qymcad_core::feature::FaceKey { index: 0, centroid: [0.0; 3], normal: [0.0, 0.0, 1.0], id: d }))
+                {
+                    // restore THE FACE SELECTION by its persistent `FaceKey`, then highlight it
+                    *pc.sel = qymcad_ui_state::Sel::Face(mi, fi);
+                }
             }
             pc.cmd.params = vec![cmd_param_from(&*pc.project, fid, "f-diameter", "diameter", diameter, 0.1, 10000.0), cmd_param_from(&*pc.project, fid, "f-depth", "depth", depth, 0.1, 10000.0)];
             // where it stands on its face, as the two shifts from the face centre the fields hold
-            let (u, v) = match *pc.sel {
-                qymcad_ui_state::Sel::Face(mi, fi) if sketch == 0 => {
-                    pc.project.bodies.get(mi).and_then(|b| b.faces.get(fi)).map_or((0.0, 0.0), |f| hole_shifts([f.centroid.x, f.centroid.y, f.centroid.z], f.normal, point))
-                }
-                _ => (0.0, 0.0),
+            let (u, v) = if sketch == 0 {
+                let resolved_face = match *pc.sel {
+                    qymcad_ui_state::Sel::Face(mi, fi) => pc.project.bodies.get(mi).and_then(|b| b.faces.get(fi)),
+                    _ => qymcad_ui_state::hole_face_indices_from(*pc.sel, &*pc.project, &*pc.gsel, pc.cmd.edit).and_then(|t| pc.project.bodies.get(t.mesh_idx).and_then(|b| b.faces.get(t.face_idx))),
+                };
+                resolved_face.map_or_else(|| hole_shifts(face.hint.centroid, face.hint.normal, point), |f| hole_shifts([f.centroid.x, f.centroid.y, f.centroid.z], f.normal, point))
+            } else {
+                (0.0, 0.0)
             };
             pc.cmd.params.push(cmd_param_from(&*pc.project, fid, "f-hole-u", "off_u", u, -100000.0, 100000.0));
             pc.cmd.params.push(cmd_param_from(&*pc.project, fid, "f-hole-v", "off_v", v, -100000.0, 100000.0));

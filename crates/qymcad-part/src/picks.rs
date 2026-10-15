@@ -75,7 +75,15 @@ pub fn click_on_nothing(pc: &mut qymcad_ui_state::PartCtx) {
 /// into the two shifts from the face's centre along its own axes - the fields at the geometry, so the centre can then
 /// be typed exactly.
 pub fn place_hole_at(pc: &mut qymcad_ui_state::PartCtx, rect: Rect, screen: Pos2) {
-    let (7, qymcad_ui_state::Sel::Face(mi, fi)) = (pc.armed.cmd_kind(), *pc.sel) else { return };
+    if pc.armed.cmd_kind() != 7 {
+        return;
+    }
+    let face_sel = match *pc.sel {
+        qymcad_ui_state::Sel::Face(mi, fi) => Some(qymcad_ui_state::HoleFaceTarget { mesh_idx: mi, face_idx: fi }),
+        _ => qymcad_ui_state::hole_face_indices_from(*pc.sel, &*pc.project, &*pc.gsel, pc.cmd.edit),
+    };
+    let Some(target) = face_sel else { return };
+    let (mi, fi) = (target.mesh_idx, target.face_idx);
     let (Some(body), Some(face)) = (pc.project.mesh_id(mi), pc.project.bodies.get(mi).and_then(|b| b.faces.get(fi))) else { return };
     let (c, n) = ([face.centroid.x, face.centroid.y, face.centroid.z], face.normal);
     // the ray in the body's own frame: the view shows the body through its placement in the context
@@ -88,13 +96,15 @@ pub fn place_hole_at(pc: &mut qymcad_ui_state::PartCtx, rect: Rect, screen: Pos2
     // the same face clicked where the hole already stands (within 0.5 mm) lets it go; anywhere else on it moves the
     // hole there
     let here = (u - qymcad_ui_state::cmd_val(pc.cmd, "off_u")).hypot(v - qymcad_ui_state::cmd_val(pc.cmd, "off_v")) < 0.5;
-    if pc.gsel.faces.contains(&face.id) && here {
+    if pc.cmd.edit.is_none() && pc.gsel.faces.contains(&face.id) && here {
         pc.gsel.faces.clear();
+        pc.gsel.faces_body = None;
         *pc.sel = qymcad_ui_state::Sel::None;
         return;
     }
     pc.gsel.faces.clear();
     pc.gsel.faces.insert(face.id);
+    pc.gsel.faces_body = Some(body);
     for (key, val) in [("off_u", u), ("off_v", v)] {
         if let Some(p) = pc.cmd.params.iter_mut().find(|p| p.key == key) {
             p.val = (val * 1000.0).round() / 1000.0;
