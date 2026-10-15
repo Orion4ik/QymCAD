@@ -16,13 +16,80 @@ fn spec(std: ThreadStandard, d: f64, p: f64) -> ThreadSpec {
 #[test]
 fn metric_coarse_pitch_matches_iso_261() {
     let mut bad = Vec::new();
-    for (d, p) in [(3.0, 0.5), (4.0, 0.7), (5.0, 0.8), (6.0, 1.0), (8.0, 1.25), (10.0, 1.5), (12.0, 1.75), (16.0, 2.0), (20.0, 2.5), (24.0, 3.0), (30.0, 3.5), (36.0, 4.0)] {
+    for (d, p) in [
+        (1.4, 0.3),
+        (2.2, 0.45),
+        (3.0, 0.5),
+        (3.5, 0.6),
+        (4.0, 0.7),
+        (4.5, 0.75),
+        (5.0, 0.8),
+        (6.0, 1.0),
+        (7.0, 1.0),
+        (8.0, 1.25),
+        (10.0, 1.5),
+        (12.0, 1.75),
+        (14.0, 2.0),
+        (16.0, 2.0),
+        (18.0, 2.5),
+        (20.0, 2.5),
+        (22.0, 2.5),
+        (24.0, 3.0),
+        (27.0, 3.0),
+        (30.0, 3.5),
+        (33.0, 3.5),
+        (36.0, 4.0),
+        (39.0, 4.0),
+    ] {
         let got = metric_coarse_pitch(d);
         if (got - p).abs() > 1e-9 {
             bad.push(format!("M{d}: pitch {got}, ISO 261 says {p}"));
         }
     }
     assert!(bad.is_empty(), "the coarse pitch table disagrees with the standard:\n{}", bad.join("\n"));
+}
+
+/// The coarse pitch of a trapezoidal Tr thread, per ISO 2904.
+#[test]
+fn tr_coarse_pitch_matches_iso_2904() {
+    let mut bad = Vec::new();
+    for (d, p) in [
+        (8.0, 1.5),
+        (10.0, 2.0),
+        (12.0, 3.0),
+        (14.0, 3.0),
+        (16.0, 4.0),
+        (18.0, 4.0),
+        (20.0, 4.0),
+        (22.0, 5.0),
+        (24.0, 5.0),
+        (26.0, 5.0),
+        (28.0, 5.0),
+        (30.0, 6.0),
+        (32.0, 6.0),
+        (34.0, 6.0),
+        (36.0, 6.0),
+        (38.0, 7.0),
+        (40.0, 7.0),
+        (42.0, 7.0),
+        (44.0, 7.0),
+        (46.0, 8.0),
+        (48.0, 8.0),
+        (50.0, 8.0),
+        (52.0, 8.0),
+        (55.0, 9.0),
+        (60.0, 9.0),
+        (65.0, 10.0),
+        (70.0, 10.0),
+        (75.0, 10.0),
+        (80.0, 10.0),
+    ] {
+        let got = qymcad_core::thread::tr_coarse_pitch(d);
+        if (got - p).abs() > 1e-9 {
+            bad.push(format!("Tr{d}: pitch {got}, ISO 2904 says {p}"));
+        }
+    }
+    assert!(bad.is_empty(), "the trapezoidal coarse pitch disagrees with ISO 2904:\n{}", bad.join("\n"));
 }
 
 /// Metric ISO: the pitch and minor diameters follow the ISO 68-1 formulas — d2 = d − 0.649519P,

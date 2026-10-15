@@ -1118,6 +1118,16 @@ impl Project {
         body
     }
 
+    /// Subdivide a mesh body using OpenSubdiv Catmull-Clark with optional semi-sharp edge crease sharpness:
+    /// `src` is the input body, `levels` is subdivision depth (1..4), `sharp` is crease sharpness.
+    pub fn add_subdivide(&mut self, src: Id, levels: u32, sharp: f64) -> Id {
+        use crate::feature::{FeatureKind, FeatureNode};
+        let body = self.alloc_id();
+        let parent = self.timeline.iter().find(|n| n.kind.owns_body(src)).and_then(|n| n.parent).or_else(|| Some(self.body_parent()));
+        self.push_timeline(FeatureNode { id: body, name: "feat-name-subdivide".into(), kind: FeatureKind::Subdivide { src, body, levels, sharp }, parent, dirty: true, suppressed: false });
+        body
+    }
+
     /// Stitch sheets: `parts` are the sheet bodies and `tol` is the edge coincidence tolerance.
     pub fn add_stitch(&mut self, parts: Vec<Id>, tol: f64) -> Id {
         use crate::feature::{FeatureKind, FeatureNode};

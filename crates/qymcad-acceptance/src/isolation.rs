@@ -42,11 +42,56 @@ fn note_time(file: &std::path::Path, path: &str, took: Duration) {
     }
 }
 
-/// How much memory the process `pid` holds now, in megabytes; `None` where the system does not say (no `/proc`).
+/// How much memory the process `pid` holds now, in megabytes; `None` where the system does not say.
 fn resident_mb(pid: u32) -> Option<u64> {
-    let status = std::fs::read_to_string(format!("/proc/{pid}/status")).ok()?;
-    let kb: u64 = status.lines().find_map(|l| l.strip_prefix("VmRSS:"))?.trim().trim_end_matches("kB").trim().parse().ok()?;
-    Some(kb / 1024)
+    if let Ok(status) = std::fs::read_to_string(format!("/proc/{pid}/status")) {
+        let kb: u64 = status.lines().find_map(|l| l.strip_prefix("VmRSS:"))?.trim().trim_end_matches("kB").trim().parse().ok()?;
+        return Some(kb / 1024);
+    }
+    #[cfg(target_os = "macos")]
+    {
+        let out = std::process::Command::new("ps").args(["-o", "rss=", "-p", &pid.to_string()]).output().ok()?;
+        if out.status.success() {
+            let s = std::str::from_utf8(&out.stdout).ok()?.trim();
+            let kb: u64 = s.parse().ok()?;
+            return Some(kb / 1024);
+        }
+    }
+    #[cfg(target_os = "windows")]
+    {
+        #[repr(C)]
+        struct ProcessMemoryCounters {
+            cb: u32,
+            page_fault_count: u32,
+            peak_working_set_size: usize,
+            working_set_size: usize,
+            quota_peak_paged_pool_usage: usize,
+            quota_paged_pool_usage: usize,
+            quota_peak_non_paged_pool_usage: usize,
+            quota_non_paged_pool_usage: usize,
+            pagefile_usage: usize,
+            peak_pagefile_usage: usize,
+        }
+        extern "system" {
+            fn OpenProcess(desired_access: u32, inherit_handle: i32, process_id: u32) -> *mut std::ffi::c_void;
+            fn CloseHandle(handle: *mut std::ffi::c_void) -> i32;
+            fn K32GetProcessMemoryInfo(process: *mut std::ffi::c_void, counters: *mut ProcessMemoryCounters, cb: u32) -> i32;
+        }
+        const PROCESS_QUERY_LIMITED_INFORMATION: u32 = 0x1000;
+        unsafe {
+            let handle = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid);
+            if !handle.is_null() {
+                let mut pmc = std::mem::zeroed::<ProcessMemoryCounters>();
+                pmc.cb = std::mem::size_of::<ProcessMemoryCounters>() as u32;
+                let ok = K32GetProcessMemoryInfo(handle, &mut pmc, pmc.cb);
+                CloseHandle(handle);
+                if ok != 0 {
+                    return Some((pmc.working_set_size as u64) / (1024 * 1024));
+                }
+            }
+        }
+    }
+    None
 }
 
 /// How a check's own process came to an end.

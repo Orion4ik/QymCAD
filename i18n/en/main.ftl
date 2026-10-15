@@ -2661,6 +2661,16 @@ cmd-recognise-asis = As it is (a polyhedron)
 mesh-recognise = Recognised body
 mesh-solid = Solid from a mesh
 
+# Subdivide
+f-subdivide = Subdivide
+f-subdiv-levels = Levels
+f-subdiv-sharp = Crease
+feat-name-subdivide = Subdivision surface
+tb-subdivide-hint = Subdivide — Catmull-Clark subdivision surface with creases
+hint-subdivide = Select a body or mesh to subdivide
+msg-subdivide = Select a body to subdivide, adjust levels and crease sharpness
+cmd-subdivide-done = Subdivision surface created
+
 # Э2: обрезка поверхности
 tb-trim-surface-hint = Trim — cut the excess away along a neighbouring body
 msg-trim = Click the part of the surface that stays

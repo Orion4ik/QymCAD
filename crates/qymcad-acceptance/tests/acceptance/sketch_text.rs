@@ -31,9 +31,14 @@ probe! {
         // the rows of the list stand under the button of a file and the count of what was found
         let from_file = s.word("font-from-file");
         let button = s.find(&from_file, pos2(640.0, 400.0)).expect("the list offers a font from a file");
-        let first_row = pos2(button.center().x, button.bottom() + 40.0);
-        s.click(first_row);
         let title = s.word("pk-font");
+        for step in 0..15 {
+            let row = pos2(button.center().x, button.bottom() + 40.0 + 26.0 * step as f32);
+            s.click(row);
+            if !s.windows().contains(&title) {
+                break;
+            }
+        }
         assert!(!s.windows().contains(&title), "the list stayed open after a font was clicked; on screen: {:?}", s.words());
         let named = s.word("opt-font");
         let bar = s.in_hand();

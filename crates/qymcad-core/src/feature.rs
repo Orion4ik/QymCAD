@@ -1171,6 +1171,16 @@ pub enum FeatureKind {
         #[serde(default)]
         simplify: f64,
     },
+    /// Subdivide a mesh body using OpenSubdiv Catmull-Clark with optional semi-sharp crease sharpness:
+    /// `src` is the input body, `levels` is subdivision depth (1..4), `sharp` is crease sharpness.
+    Subdivide {
+        src: Id,
+        body: Id,
+        #[serde(default = "default_subdiv_levels")]
+        levels: u32,
+        #[serde(default)]
+        sharp: f64,
+    },
     /// Copy faces into a separate surface: faces of body `src`, selected by a query, become an independent
     /// sheet `body`. The source is not consumed — a copy is a copy, so the body stays where it is while the
     /// surface lives its own life and returns to it through a face replacement.
@@ -1499,6 +1509,10 @@ pub enum FeatureKind {
 
 fn unit_scale() -> f64 {
     1.0
+}
+
+fn default_subdiv_levels() -> u32 {
+    1
 }
 
 /// Identity rigid transform (3x4 row-major): the body is built in place.
@@ -2491,6 +2505,7 @@ impl FeatureKind {
             }
             FeatureKind::Thread { length, lead_in, lead_out, .. } => vec![("length", length), ("lead_in", lead_in), ("lead_out", lead_out)],
             FeatureKind::Auger { length, lead_in, lead_out, .. } => vec![("length", length), ("lead_in", lead_in), ("lead_out", lead_out)],
+            FeatureKind::Subdivide { levels, sharp, .. } => vec![("levels", levels as f64), ("sharp", sharp)],
             _ => Vec::new(),
         }
     }
@@ -2525,6 +2540,7 @@ impl FeatureKind {
             | FeatureKind::Stitch { body, .. }
             | FeatureKind::MeshSolid { body, .. }
             | FeatureKind::MeshRecognised { body, .. }
+            | FeatureKind::Subdivide { body, .. }
             | FeatureKind::Trim { body, .. }
             | FeatureKind::Patch { body, .. }
             | FeatureKind::SurfaceReplace { body, .. }
@@ -2695,6 +2711,7 @@ impl FeatureKind {
             | FeatureKind::OffsetSurface { src, .. }
             | FeatureKind::MeshSolid { src, .. }
             | FeatureKind::MeshRecognised { src, .. }
+            | FeatureKind::Subdivide { src, .. }
             | FeatureKind::Patch { src, .. } => vec![src],
             FeatureKind::SurfaceReplace { src, surface, .. } => vec![src, surface],
             FeatureKind::Stitch { ref parts, .. } => parts.clone(),
@@ -2746,6 +2763,7 @@ impl FeatureKind {
             | FeatureKind::Patch { src, .. }
             | FeatureKind::MeshSolid { src, .. }
             | FeatureKind::MeshRecognised { src, .. }
+            | FeatureKind::Subdivide { src, .. }
             | FeatureKind::SplitFace { src, .. } => fix(src),
             FeatureKind::SurfaceReplace { src, surface, .. } => {
                 fix(src);
@@ -2789,7 +2807,8 @@ impl FeatureKind {
             | FeatureKind::OffsetSurface { src, body, .. }
             | FeatureKind::Patch { src, body, .. }
             | FeatureKind::MeshSolid { src, body, .. }
-            | FeatureKind::MeshRecognised { src, body, .. } => {
+            | FeatureKind::MeshRecognised { src, body, .. }
+            | FeatureKind::Subdivide { src, body, .. } => {
                 m(src);
                 m(body);
             }
@@ -3029,7 +3048,8 @@ impl FeatureKind {
             // a mesh turned into a solid is carried on by the solid: the mesh would otherwise stand beside it as a
             // second body of the part
             | FeatureKind::MeshSolid { src, .. }
-            | FeatureKind::MeshRecognised { src, .. } => Some(src),
+            | FeatureKind::MeshRecognised { src, .. }
+            | FeatureKind::Subdivide { src, .. } => Some(src),
             FeatureKind::BodyBoolean { a, .. } => Some(a), // The base is primary, for lineage; `b` is in `consumed()` too.
             // For a stitch the lineage follows the first sheet; the rest are in `consumed()` as well.
             FeatureKind::Stitch { ref parts, .. } => parts.first().copied(),

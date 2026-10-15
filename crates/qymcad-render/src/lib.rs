@@ -1487,16 +1487,42 @@ pub fn draw_hole_preview(pn: &Painting, painter: &egui::Painter, rect: Rect) {
     let frames: Vec<[f64; 12]> = if pn.hole.mode == 1 {
         pn.hole.sketch.map(|sid| pn.project.sketch_hole_points(sid, pn.hole.flip)).unwrap_or_default()
     } else {
-        let qymcad_ui_state::Sel::Face(mi, fi) = pn.sel else { return };
+        let Some((mi, fi)) = qymcad_ui_state::hole_face_indices(pn) else { return };
         let (Some(body), Some(face)) = (pn.project.mesh_id(mi), pn.project.bodies.get(mi).and_then(|b| b.faces.get(fi))) else { return };
         let wt = pn.project.body_display_transform(body, qymcad_ui_state::current_ctx_id(pn.active_path, pn.project));
-        let pl = qymcad_core::feature::PlaneFrame::from_origin_normal([face.centroid.x, face.centroid.y, face.centroid.z], face.normal, 0.0).matrix12();
+        let c = [face.centroid.x, face.centroid.y, face.centroid.z];
+        let frame = qymcad_core::feature::PlaneFrame::from_origin_normal(c, face.normal, 0.0);
+        let (u, v) = (v("off_u"), v("off_v"));
+        let origin = [c[0] + frame.x[0] * u + frame.y[0] * v, c[1] + frame.x[1] * u + frame.y[1] * v, c[2] + frame.x[2] * u + frame.y[2] * v];
+        let pl = qymcad_core::feature::PlaneFrame { origin, x: frame.x, y: frame.y }.matrix12();
         vec![qymcad_core::feature::compose12(&wt, &pl)]
     };
     let basis = pn.cam.basis();
     let scr = qymcad_ui_state::Screen { cam: &pn.cam, set: pn.set, rect, basis: &basis };
     let col = qymcad_scheme::a(pn.scheme.pal.preview(), 220);
+    let ghost_col = qymcad_scheme::a(pn.scheme.pal.error_mild(), 60);
     for pl in &frames {
+        let r = (tool.diameter / 2.0).max(0.1);
+        let d = tool.depth.abs().max(0.1);
+        let num_seg = 24;
+        let at = |radius: f64, a: f64, z: f64| scr.at(qymcad_core::feature::apply12(pl, [radius * a.cos(), radius * a.sin(), z])).0;
+        for i in 0..num_seg {
+            let a0 = std::f64::consts::TAU * i as f64 / num_seg as f64;
+            let a1 = std::f64::consts::TAU * (i + 1) as f64 / num_seg as f64;
+            let p0 = at(r, a0, 0.0);
+            let p1 = at(r, a1, 0.0);
+            let p2 = at(r, a1, -d);
+            let p3 = at(r, a0, -d);
+            painter.add(egui::Shape::convex_polygon(vec![p0, p1, p2, p3], ghost_col, Stroke::NONE));
+        }
+        let bottom_pts: Vec<Pos2> = (0..num_seg)
+            .map(|i| {
+                let a = std::f64::consts::TAU * i as f64 / num_seg as f64;
+                at(r, a, -d)
+            })
+            .collect();
+        painter.add(egui::Shape::convex_polygon(bottom_pts, ghost_col, Stroke::NONE));
+
         for line in qymcad_ui_state::hole_outline(pl, tool) {
             painter.add(egui::Shape::line(line.iter().map(|p| scr.at(*p).0).collect(), Stroke::new(1.5, col)));
         }
@@ -1526,6 +1552,88 @@ pub fn draw_draft_preview(pn: &Painting, painter: &egui::Painter, rect: Rect) {
     let col = qymcad_scheme::a(pn.scheme.pal.preview(), 220);
     for line in draft_preview_lines(pn) {
         painter.add(egui::Shape::line(line.iter().map(|p| scr.at(*p).0).collect(), Stroke::new(1.5, col)));
+    }
+}
+
+/// Real-time live preview of OpenSubdiv Catmull-Clark subdivision surface with crease sharpness.
+pub fn draw_subdiv_preview(pn: &Painting, painter: &egui::Painter, rect: Rect) {
+    let levels = (qymcad_ui_state::cmd_val(pn.cmd, "levels") as usize).clamp(1, 4);
+    let sharp = qymcad_ui_state::cmd_val(pn.cmd, "sharp").clamp(0.0, 10.0);
+
+    let (cage, wt) = if let qymcad_ui_state::Sel::Mesh(mi) = pn.sel {
+        if let (Some(body), Some(b)) = (pn.project.mesh_id(mi), pn.project.bodies.get(mi)) {
+            let wt = pn.project.body_display_transform(body, qymcad_ui_state::current_ctx_id(pn.active_path, pn.project));
+            let cage_verts: Vec<[f64; 3]> = b.mesh.verts.iter().map(|v| [v.x, v.y, v.z]).collect();
+            let cage_faces: Vec<Vec<u32>> = b.mesh.tris.iter().map(|t| vec![t[0], t[1], t[2]]).collect();
+            if !cage_verts.is_empty() && !cage_faces.is_empty() {
+                (qymcad_core::subdiv::Cage { verts: cage_verts, faces: cage_faces }, wt)
+            } else {
+                (qymcad_core::subdiv::Cage::cube(30.0), wt)
+            }
+        } else {
+            (qymcad_core::subdiv::Cage::cube(30.0), qymcad_core::feature::PLACE_IDENTITY)
+        }
+    } else {
+        (qymcad_core::subdiv::Cage::cube(30.0), qymcad_core::feature::PLACE_IDENTITY)
+    };
+
+    let mut subd = qymcad_core::subdiv::OpenSubdivCage::new(cage.clone());
+    if sharp > 1e-4 {
+        subd.set_all_edges_crease(sharp);
+    }
+    let refined = subd.subdivided(levels);
+    let tris = refined.to_triangles();
+
+    let basis = pn.cam.basis();
+    let scr = qymcad_ui_state::Screen { cam: &pn.cam, set: pn.set, rect, basis: &basis };
+
+    // 1. Shaded smooth limit surface with directional lighting
+    let mut hm = egui::Mesh::default();
+    let light_dir = [0.3f64, 0.5, 0.8];
+    let l_len = (light_dir[0] * light_dir[0] + light_dir[1] * light_dir[1] + light_dir[2] * light_dir[2]).sqrt();
+    let l = [light_dir[0] / l_len, light_dir[1] / l_len, light_dir[2] / l_len];
+
+    let base_rgb = pn.scheme.pal.preview();
+    for tri in &tris {
+        let v0 = qymcad_core::feature::apply12(&wt, refined.cage.verts[tri[0] as usize]);
+        let v1 = qymcad_core::feature::apply12(&wt, refined.cage.verts[tri[1] as usize]);
+        let v2 = qymcad_core::feature::apply12(&wt, refined.cage.verts[tri[2] as usize]);
+
+        let e1 = [v1[0] - v0[0], v1[1] - v0[1], v1[2] - v0[2]];
+        let e2 = [v2[0] - v0[0], v2[1] - v0[1], v2[2] - v0[2]];
+        let n = [e1[1] * e2[2] - e1[2] * e2[1], e1[2] * e2[0] - e1[0] * e2[2], e1[0] * e2[1] - e1[1] * e2[0]];
+        let n_len = (n[0] * n[0] + n[1] * n[1] + n[2] * n[2]).sqrt().max(1e-9);
+        let n = [n[0] / n_len, n[1] / n_len, n[2] / n_len];
+
+        let ndotl = (n[0] * l[0] + n[1] * l[1] + n[2] * l[2]).abs();
+        let brightness = 0.5 + 0.5 * ndotl;
+        let r = ((f64::from(base_rgb.r())) * brightness).clamp(0.0, 255.0) as u8;
+        let g = ((f64::from(base_rgb.g())) * brightness).clamp(0.0, 255.0) as u8;
+        let b = ((f64::from(base_rgb.b())) * brightness).clamp(0.0, 255.0) as u8;
+        let col = egui::Color32::from_rgba_unmultiplied(r, g, b, 190);
+
+        let p0 = scr.at(v0).0;
+        let p1 = scr.at(v1).0;
+        let p2 = scr.at(v2).0;
+
+        let base_idx = hm.vertices.len() as u32;
+        hm.colored_vertex(p0, col);
+        hm.colored_vertex(p1, col);
+        hm.colored_vertex(p2, col);
+        hm.add_triangle(base_idx, base_idx + 1, base_idx + 2);
+    }
+    painter.add(egui::Shape::mesh(hm));
+
+    // 2. Control cage wireframe in accent gold / orange
+    let cage_col = qymcad_scheme::a(pn.scheme.pal.preview(), 210);
+    for face in &cage.faces {
+        for k in 0..face.len() {
+            let a = face[k] as usize;
+            let b = face[(k + 1) % face.len()] as usize;
+            let pa = scr.at(qymcad_core::feature::apply12(&wt, cage.verts[a])).0;
+            let pb = scr.at(qymcad_core::feature::apply12(&wt, cage.verts[b])).0;
+            painter.add(egui::Shape::line_segment([pa, pb], Stroke::new(1.5, cage_col)));
+        }
     }
 }
 
@@ -3936,12 +4044,61 @@ pub fn draw_face_arrow(pn: &Painting, painter: &egui::Painter, rect: Rect, basis
         let pts: Vec<Pos2> = ring.points().into_iter().map(|p| scr.at(p).0).collect();
         painter.add(egui::Shape::line(pts, Stroke::new(if hot { 2.8 } else { 1.6 }, col)));
     }
+    // edge radius ring/arc for fillet / chamfer gizmo
+    if let Some(gizmo) = qymcad_ui_state::edge_radius_geometry(pn) {
+        let hot = pn.handle_drag == Some(qymcad_ui_state::Handle::Arrow(gizmo.param_key));
+        let col = if hot { pn.scheme.pal.highlight() } else { pn.scheme.pal.handle_face() };
+        let segs = 32;
+        let mut arc_pts = Vec::with_capacity(segs + 1);
+        let r = gizmo.radius.max(0.05);
+        for i in 0..=segs {
+            let th = (i as f64 / segs as f64) * std::f64::consts::TAU;
+            let c = th.cos();
+            let s = th.sin();
+            let p = [
+                gizmo.origin[0] + (gizmo.normal[0] * c + gizmo.binormal[0] * s) * r,
+                gizmo.origin[1] + (gizmo.normal[1] * c + gizmo.binormal[1] * s) * r,
+                gizmo.origin[2] + (gizmo.normal[2] * c + gizmo.binormal[2] * s) * r,
+            ];
+            arc_pts.push(scr.at(p).0);
+        }
+        painter.add(egui::Shape::line(arc_pts, Stroke::new(if hot { 2.0 } else { 1.3 }, qymcad_scheme::a(col, 180))));
+        let tip_s = scr.at(gizmo.tip).0;
+        painter.circle_stroke(tip_s, if hot { 8.5 } else { 7.0 }, Stroke::new(1.8, col));
+    }
     for arrow in &hs.arrows {
         let (a, b) = (scr.at(arrow.base).0, scr.at(arrow.tip()).0);
         let hot = pn.handle_drag == Some(qymcad_ui_state::Handle::Arrow(arrow.key));
         let col = if hot { pn.scheme.pal.highlight() } else { pn.scheme.pal.handle_face() };
         painter.add(egui::Shape::line_segment([a, b], Stroke::new(if hot { 3.5 } else { 2.5 }, col)));
         painter.circle_filled(b, if hot { 6.0 } else { 5.0 }, col);
+
+        // Arrowhead and value readout
+        let delta = b - a;
+        let len = delta.length();
+        if len > 8.0 {
+            let dir = delta / len;
+            let perp = egui::vec2(-dir.y, dir.x);
+            let w1 = b - dir * 8.0 + perp * 4.0;
+            let w2 = b - dir * 8.0 - perp * 4.0;
+            painter.add(egui::Shape::line_segment([b, w1], Stroke::new(if hot { 2.5 } else { 1.8 }, col)));
+            painter.add(egui::Shape::line_segment([b, w2], Stroke::new(if hot { 2.5 } else { 1.8 }, col)));
+        }
+        if arrow.key == "diameter" {
+            let dia = qymcad_ui_state::cmd_val(pn.cmd, "diameter");
+            let r = (dia / 2.0).max(0.01);
+            let center_w = [arrow.base[0] - arrow.dir[0] * r, arrow.base[1] - arrow.dir[1] * r, arrow.base[2] - arrow.dir[2] * r];
+            let c_screen = scr.at(center_w).0;
+            painter.add(egui::Shape::line_segment([c_screen, a], Stroke::new(if hot { 1.8 } else { 1.2 }, qymcad_scheme::a(col, 160))));
+        }
+        let txt = if arrow.key == "diameter" {
+            format!("Ø {:.1} mm", qymcad_ui_state::cmd_val(pn.cmd, "diameter"))
+        } else if arrow.key == "sharp" {
+            format!("Crease: {:.1}", qymcad_ui_state::cmd_val(pn.cmd, "sharp"))
+        } else {
+            format!("{:.1} mm", arrow.len.abs())
+        };
+        painter.text(b + egui::vec2(10.0, -10.0), egui::Align2::LEFT_BOTTOM, txt, egui::FontId::proportional(12.0), col);
     }
     qymcad_ui_state::remember_handles(painter.ctx(), qymcad_ui_state::handles_screen_rect(&hs, &scr));
 }
@@ -3990,6 +4147,10 @@ pub fn draw_feat_cmd_preview(pn: &Painting, painter: &egui::Painter, rect: Rect)
     }
     if pn.armed.cmd_kind() == 23 && pn.mode_3d {
         draw_draft_preview(pn, painter, rect);
+        return;
+    }
+    if pn.armed.cmd_kind() == 37 && pn.mode_3d {
+        draw_subdiv_preview(pn, painter, rect);
         return;
     }
     // THE CONTOURS A REVOLUTION TAKES are outlined where they lie: a pick is lit, as it is in the professional systems,

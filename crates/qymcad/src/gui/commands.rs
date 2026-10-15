@@ -211,6 +211,7 @@ impl App {
             16 => start_mirror_cmd(&mut self.part_ctx()),
             17 | 18 => self.start_array_cmd(cmd),
             20..=22 => self.start_datum_cmd(cmd),
+            37 => start_subdiv_cmd(&mut self.part_ctx()),
             _ => {}
         }
     }

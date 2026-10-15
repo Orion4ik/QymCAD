@@ -33,6 +33,11 @@ pkg-linux: pkg-linux-image
         {{IMG}} bash packaging/linux/build-appimage.sh
     @echo "-> the files are in ./dist"
 
+# --- macOS App bundle (.app + zip) ---
+pkg-macos:
+    cargo build --release --bin qymcad
+    bash packaging/macos/bundle.sh
+
 # --- Windows portable zip ---
 # The main path is GitHub Actions (.github/workflows/release.yml): push a vX.Y.Z tag, or Actions -> Run workflow.
 # Locally (in a Win10/11 VM with Visual Studio Build Tools) it goes like this - the kernel is built from

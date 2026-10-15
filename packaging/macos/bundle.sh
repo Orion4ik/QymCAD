@@ -12,6 +12,17 @@ set -euo pipefail
 
 BIN=target/release/qymcad
 [ -x "$BIN" ] || { echo "!!! no $BIN - run cargo build --release first"; exit 1; }
+
+# When OCCT_ROOT is unset, look in the standard Homebrew locations before giving up.
+if [ -z "${OCCT_ROOT:-}" ]; then
+    if [ -d "/opt/homebrew/opt/opencascade" ]; then
+        OCCT_ROOT="/opt/homebrew/opt/opencascade"
+    elif [ -d "/usr/local/opt/opencascade" ]; then
+        OCCT_ROOT="/usr/local/opt/opencascade"
+    elif command -v brew >/dev/null 2>&1 && brew --prefix opencascade >/dev/null 2>&1; then
+        OCCT_ROOT="$(brew --prefix opencascade)"
+    fi
+fi
 OCCT_ROOT=${OCCT_ROOT:?set OCCT_ROOT to the OCCT installation}
 
 # THE PROCESSOR, in the archive name and in the notes. Two packages go up side by side, and a person
@@ -62,9 +73,46 @@ cat > "$APP/Contents/Info.plist" <<PLIST
     <key>CFBundleVersion</key><string>${VER_PLIST:-0.0.0}</string>
     <key>LSMinimumSystemVersion</key><string>12.0</string>
     <key>NSHighResolutionCapable</key><true/>
+    <key>CFBundleDocumentTypes</key>
+    <array>
+        <dict>
+            <key>CFBundleTypeName</key><string>QymCAD Project</string>
+            <key>CFBundleTypeRole</key><string>Editor</string>
+            <key>CFBundleTypeIconFile</key><string>qymcad</string>
+            <key>LSHandlerRank</key><string>Owner</string>
+            <key>CFBundleTypeExtensions</key>
+            <array>
+                <string>qcad</string>
+            </array>
+            <key>LSItemContentTypes</key>
+            <array>
+                <string>tech.qymis.cad.project</string>
+            </array>
+        </dict>
+    </array>
+    <key>UTExportedTypeDeclarations</key>
+    <array>
+        <dict>
+            <key>UTTypeIdentifier</key><string>tech.qymis.cad.project</string>
+            <key>UTTypeDescription</key><string>QymCAD Project</string>
+            <key>UTTypeConformsTo</key>
+            <array>
+                <string>public.data</string>
+                <string>public.content</string>
+            </array>
+            <key>UTTypeTagSpecification</key>
+            <dict>
+                <key>public.filename-extension</key>
+                <array>
+                    <string>qcad</string>
+                </array>
+            </dict>
+        </dict>
+    </array>
 </dict>
 </plist>
 PLIST
+
 
 # --- the kernel libraries, with their paths rewritten to live inside the bundle ---
 #
@@ -78,6 +126,7 @@ PLIST
 # followed), and `zip -y` stores them as links instead of expanding them again in the archive.
 echo ">>> gathering the kernel libraries"
 cp -RP "$OCCT_ROOT"/lib/*.dylib "$APP/Contents/Frameworks/"
+chmod -R u+w "$APP"
 n=$(find "$APP/Contents/Frameworks" -type f -name '*.dylib' | wc -l | tr -d ' ')
 links=$(find "$APP/Contents/Frameworks" -type l -name '*.dylib' | wc -l | tr -d ' ')
 [ "$n" -gt 0 ] || { echo "!!! no dylibs found under $OCCT_ROOT/lib"; exit 1; }
@@ -136,6 +185,15 @@ if [ -n "$left" ]; then
     echo "!!! a library still points at the build machine:"
     printf '%s\n' "$left" | head -5 || true
     exit 1
+fi
+
+# AD-HOC SIGNATURE. Modifying Mach-O binaries and dynamic libraries with install_name_tool invalidates
+# their code signature. On Apple Silicon (ARM64), macOS requires every mapped page to carry a valid
+# signature; an invalid one is killed by the kernel at launch with SIGKILL (Code Signature Invalid).
+# An ad-hoc signature satisfies the kernel without an Apple Developer certificate.
+if command -v codesign >/dev/null 2>&1; then
+    echo ">>> signing bundle with ad-hoc signature"
+    codesign --force --deep -s - "$APP"
 fi
 
 # UNSIGNED, AND SAID SO IN BOTH LANGUAGES. Without an Apple signature the system marks the download as

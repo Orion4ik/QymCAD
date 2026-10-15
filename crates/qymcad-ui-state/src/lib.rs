@@ -355,6 +355,12 @@ pub struct Windows {
     pub icon_manager: crate::icons::IconManagerState,
     /// Persistent state of the developer icon theme packager modal.
     pub icon_packager: crate::icons::PackagerDialogState,
+    // Active tab inside the MCP Agent window (0: Copilot, 1: RPC, 2: Settings).
+    // pub mcp_active_tab: usize,
+    // Chat messages history of the AI Copilot: (is_user, message).
+    // pub mcp_chat_history: Vec<(bool, String)>,
+    // Current input line of the AI Copilot.
+    // pub mcp_chat_input: String,
 }
 
 impl Windows {
@@ -9491,6 +9497,95 @@ pub fn face_arrow_key(armed: &Armed) -> Option<&'static str> {
     }
 }
 
+pub struct EdgeRadiusGizmo {
+    pub origin: [f64; 3],
+    pub normal: [f64; 3],
+    pub binormal: [f64; 3],
+    pub tangent: [f64; 3],
+    pub radius: f64,
+    pub tip: [f64; 3],
+    pub param_key: &'static str,
+}
+
+pub fn edge_radius_geometry(pn: &Painting) -> Option<EdgeRadiusGizmo> {
+    let param_key = match pn.armed.cmd_kind() {
+        4 => "radius",
+        5 => "dist",
+        _ => return None,
+    };
+    if pn.gsel.edges.is_empty() {
+        return None;
+    }
+    let body = pn.edges.body?;
+    let target_edge_id = pn
+        .gsel
+        .last_edge
+        .and_then(|(e, b)| if b == body && pn.gsel.edges.contains(&e) { Some(e) } else { None })
+        .or_else(|| pn.edges.ids.iter().copied().find(|id| *id != 0 && pn.gsel.edges.contains(id)))?;
+
+    let idx = pn.edges.ids.iter().position(|&id| id == target_edge_id)?;
+    let poly = pn.edges.polys.get(idx)?;
+    if poly.len() < 2 {
+        return None;
+    }
+
+    let m = poly.len() / 2;
+    let (p0, p1) = if poly.len() == 2 { (poly[0], poly[1]) } else { (poly[m - 1], poly[m]) };
+    let mid_loc = [(p0[0] as f64 + p1[0] as f64) * 0.5, (p0[1] as f64 + p1[1] as f64) * 0.5, (p0[2] as f64 + p1[2] as f64) * 0.5];
+    let tan_loc = v_sub([p1[0] as f64, p1[1] as f64, p1[2] as f64], [p0[0] as f64, p0[1] as f64, p0[2] as f64]);
+
+    let wt = pn.project.body_display_transform(body, current_ctx_id(pn.active_path, pn.project));
+    let origin = qymcad_core::feature::apply12(&wt, mid_loc);
+    let tan_w = v_norm(qymcad_core::feature::apply12_dir(&wt, tan_loc));
+
+    let basis = pn.cam.basis();
+    let fwd = basis.2;
+    let n0 = v_cross(tan_w, fwd);
+    let normal = if v_dot(n0, n0) > 0.01 {
+        v_norm(n0)
+    } else {
+        let dot_up = v_dot(basis.1, tan_w);
+        let n1 = v_sub(basis.1, [tan_w[0] * dot_up, tan_w[1] * dot_up, tan_w[2] * dot_up]);
+        if v_dot(n1, n1) > 0.01 {
+            v_norm(n1)
+        } else {
+            let dot_rt = v_dot(basis.0, tan_w);
+            v_norm(v_sub(basis.0, [tan_w[0] * dot_rt, tan_w[1] * dot_rt, tan_w[2] * dot_rt]))
+        }
+    };
+    let binormal = v_cross(tan_w, normal);
+
+    let val = cmd_val(pn.cmd, param_key);
+    let disp_r = if val > 0.05 { val } else { 2.0 };
+    let tip = [origin[0] + normal[0] * disp_r, origin[1] + normal[1] * disp_r, origin[2] + normal[2] * disp_r];
+
+    Some(EdgeRadiusGizmo { origin, normal, binormal, tangent: tan_w, radius: val, tip, param_key })
+}
+
+pub fn edge_handle_hit(pn: &Painting, rect: Rect, pos: Pos2, basis: &([f64; 3], [f64; 3], [f64; 3])) -> bool {
+    let Some(gizmo) = edge_radius_geometry(pn) else { return false };
+    let scr = Screen { cam: &pn.cam, set: pn.set, rect, basis };
+    let (s_origin, s_tip) = (scr.at(gizmo.origin).0, scr.at(gizmo.tip).0);
+    s_tip.distance(pos) <= 14.0 || screen_dist_seg(pos, s_origin, s_tip) <= 8.0
+}
+
+pub fn edge_radius_drag_to(gizmo: EdgeRadiusGizmo, scr: &Screen, cmd: &mut FeatCommand, regen: &mut Rebuilding, d: egui::Vec2) {
+    let s0 = scr.at(gizmo.origin).0;
+    let s1 = scr.at([gizmo.origin[0] + gizmo.normal[0] * 10.0, gizmo.origin[1] + gizmo.normal[1] * 10.0, gizmo.origin[2] + gizmo.normal[2] * 10.0]).0;
+    let pd = s1 - s0;
+    let denom = (pd.x * pd.x + pd.y * pd.y) as f64;
+    if denom < 1e-6 {
+        return;
+    }
+    let inc = (d.x * pd.x + d.y * pd.y) as f64 * 10.0 / denom;
+    let cur = (cmd_val(cmd, gizmo.param_key) + inc).max(0.05);
+    if let Some(p) = cmd.params.iter_mut().find(|p| p.key == gizmo.param_key) {
+        p.val = cur;
+        p.txt = format!("{:.2}", cur);
+    }
+    invalidate(regen);
+}
+
 pub fn current_body(dc: &DrawCtx) -> Option<Id> {
     // THE CURRENT part: the last unconsumed body of THIS context (not the globally last one — otherwise
     // a cut in one part would catch hold of another part's body, and the second part appeared to
@@ -9631,14 +9726,174 @@ pub fn handles(pn: &Painting) -> Handles {
     Handles { arrows: handle_arrows(pn), rings: handle_rings(pn) }
 }
 
+/// The target body and face of a hole command (cmd 7), resolved either from the current selection
+/// or from the hole feature currently being edited.
+pub fn hole_face_indices_from(sel: Sel, project: &Project, gsel: &GeomSelection, edit: Option<Id>) -> Option<(usize, usize)> {
+    if let Sel::Face(mi, fi) = sel {
+        return Some((mi, fi));
+    }
+    let mi = gsel.faces_body.and_then(|b| project.mesh_index(b)).or_else(|| {
+        edit.and_then(|fid| {
+            project.timeline.iter().find(|n| n.id == fid).and_then(|n| match n.kind {
+                qymcad_core::feature::FeatureKind::Hole { src, .. } => project.mesh_index(src),
+                _ => None,
+            })
+        })
+    })?;
+    let body = project.bodies.get(mi)?;
+    if let Some(&fid) = gsel.faces.iter().next() {
+        if let Some(fi) = body.faces.iter().position(|f| f.id == fid) {
+            return Some((mi, fi));
+        }
+    }
+    if let Some(fid) = edit {
+        if let Some(n) = project.timeline.iter().find(|n| n.id == fid) {
+            if let qymcad_core::feature::FeatureKind::Hole { ref face, .. } = n.kind {
+                if let qymcad_core::refs::Query::Id(id) = face.query {
+                    if id != 0 {
+                        if let Some(fi) = body.faces.iter().position(|f| f.id == id) {
+                            return Some((mi, fi));
+                        }
+                    }
+                }
+                let nrm = face.hint.normal;
+                let c = face.hint.centroid;
+                let dot = |a: [f64; 3], b: [f64; 3]| a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+                let d2 = |x: &qymcad_core::geom::Point3| (x.x - c[0]).powi(2) + (x.y - c[1]).powi(2) + (x.z - c[2]).powi(2);
+                let fi = body
+                    .faces
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, f)| dot(f.normal, nrm) > 0.9)
+                    .min_by(|(_, a), (_, b)| d2(&a.centroid).partial_cmp(&d2(&b.centroid)).unwrap_or(std::cmp::Ordering::Equal))
+                    .map(|(i, _)| i)?;
+                return Some((mi, fi));
+            }
+        }
+    }
+    None
+}
+
+/// The target body and face of a hole command (cmd 7) from painting state.
+pub fn hole_face_indices(pn: &Painting) -> Option<(usize, usize)> {
+    hole_face_indices_from(pn.sel, pn.project, pn.gsel, pn.cmd.edit)
+}
+
+/// The manipulator arrows of the hole command (cmd 7): depth into the face, planar positioning along the
+/// face axes (off_u, off_v), and the diameter arrow placed on the perimeter of the hole.
+pub fn hole_manipulator_arrows(pn: &Painting) -> Vec<CmdArrow> {
+    if pn.hole.mode != 0 {
+        return Vec::new();
+    }
+    let Some((mi, fi)) = hole_face_indices(pn) else { return Vec::new() };
+    let (Some(body), Some(face)) = (pn.project.mesh_id(mi), pn.project.bodies.get(mi).and_then(|b| b.faces.get(fi))) else { return Vec::new() };
+    let wt = pn.project.body_display_transform(body, current_ctx_id(pn.active_path, pn.project));
+    let c = [face.centroid.x, face.centroid.y, face.centroid.z];
+    let frame = qymcad_core::feature::PlaneFrame::from_origin_normal(c, face.normal, 0.0);
+    let u = cmd_val(pn.cmd, "off_u");
+    let v = cmd_val(pn.cmd, "off_v");
+    let local_origin = [c[0] + frame.x[0] * u + frame.y[0] * v, c[1] + frame.x[1] * u + frame.y[1] * v, c[2] + frame.x[2] * u + frame.y[2] * v];
+    let origin = qymcad_core::feature::apply12(&wt, local_origin);
+    let normal_w = v_norm(qymcad_core::feature::apply12_dir(&wt, face.normal));
+    let dir_x = v_norm(qymcad_core::feature::apply12_dir(&wt, frame.x));
+    let dir_y = v_norm(qymcad_core::feature::apply12_dir(&wt, frame.y));
+    let arrow_len = (POSITION_ARROW_PX / f64::from(pn.cam.scale).max(1e-9)).max(15.0);
+    let depth_val = cmd_val(pn.cmd, "depth").abs().max(0.5);
+    let dia_val = cmd_val(pn.cmd, "diameter").abs().max(0.1);
+    let radius = dia_val / 2.0;
+    let diag = v_norm([dir_x[0] + dir_y[0], dir_x[1] + dir_y[1], dir_x[2] + dir_y[2]]);
+    let rim_point = [origin[0] + diag[0] * radius, origin[1] + diag[1] * radius, origin[2] + diag[2] * radius];
+
+    vec![
+        CmdArrow { base: origin, dir: [-normal_w[0], -normal_w[1], -normal_w[2]], len: depth_val, key: "depth" },
+        CmdArrow { base: origin, dir: dir_x, len: arrow_len, key: "off_u" },
+        CmdArrow { base: origin, dir: dir_y, len: arrow_len, key: "off_v" },
+        CmdArrow { base: rim_point, dir: diag, len: arrow_len, key: "diameter" },
+    ]
+}
+
+/// The manipulator arrow of the subdiv command (cmd 37): adjusts crease sharpness interactively.
+pub fn subdiv_manipulator_arrows(pn: &Painting) -> Vec<CmdArrow> {
+    let arrow_len = (POSITION_ARROW_PX / f64::from(pn.cam.scale).max(1e-9)).max(15.0);
+
+    // 1. If an edge is selected: place arrow at edge midpoint
+    if let Some(body) = pn.edges.body {
+        if let Some(target_edge_id) = pn
+            .gsel
+            .last_edge
+            .and_then(|(e, b)| if b == body && pn.gsel.edges.contains(&e) { Some(e) } else { None })
+            .or_else(|| pn.edges.ids.iter().copied().find(|id| *id != 0 && pn.gsel.edges.contains(id)))
+        {
+            if let Some(idx) = pn.edges.ids.iter().position(|&id| id == target_edge_id) {
+                if let Some(poly) = pn.edges.polys.get(idx) {
+                    if poly.len() >= 2 {
+                        let m = poly.len() / 2;
+                        let (p0, p1) = (poly[m - 1], poly[m]);
+                        let mid_loc = [(p0[0] as f64 + p1[0] as f64) * 0.5, (p0[1] as f64 + p1[1] as f64) * 0.5, (p0[2] as f64 + p1[2] as f64) * 0.5];
+                        let tan_loc = v_sub([p1[0] as f64, p1[1] as f64, p1[2] as f64], [p0[0] as f64, p0[1] as f64, p0[2] as f64]);
+                        let wt = pn.project.body_display_transform(body, current_ctx_id(pn.active_path, pn.project));
+                        let origin = qymcad_core::feature::apply12(&wt, mid_loc);
+                        let tan_w = v_norm(qymcad_core::feature::apply12_dir(&wt, tan_loc));
+                        let fwd = pn.cam.basis().2;
+                        let n0 = v_cross(tan_w, fwd);
+                        let normal = if v_dot(n0, n0) > 0.01 { v_norm(n0) } else { [0.0, 0.0, 1.0] };
+                        return vec![CmdArrow { base: origin, dir: normal, len: arrow_len, key: "sharp" }];
+                    }
+                }
+            }
+        }
+    }
+
+    // 2. If a face is selected: place arrow at face centroid along face normal
+    if let Sel::Face(mi, fi) = pn.sel {
+        if let (Some(body), Some(face)) = (pn.project.mesh_id(mi), pn.project.bodies.get(mi).and_then(|b| b.faces.get(fi))) {
+            let wt = pn.project.body_display_transform(body, current_ctx_id(pn.active_path, pn.project));
+            let origin = qymcad_core::feature::apply12(&wt, [face.centroid.x, face.centroid.y, face.centroid.z]);
+            let normal_w = v_norm(qymcad_core::feature::apply12_dir(&wt, face.normal));
+            return vec![CmdArrow { base: origin, dir: normal_w, len: arrow_len, key: "sharp" }];
+        }
+    }
+
+    // 3. If a mesh/body is selected: place arrow at body top center
+    if let Sel::Mesh(mi) = pn.sel {
+        if let (Some(body), Some(b)) = (pn.project.mesh_id(mi), pn.project.bodies.get(mi)) {
+            let wt = pn.project.body_display_transform(body, current_ctx_id(pn.active_path, pn.project));
+            if let Some(bbox) = b.mesh.bounds() {
+                let top_center = [(bbox.min.x + bbox.max.x) * 0.5, (bbox.min.y + bbox.max.y) * 0.5, bbox.max.z];
+                let origin = qymcad_core::feature::apply12(&wt, top_center);
+                let up = v_norm(qymcad_core::feature::apply12_dir(&wt, [0.0, 0.0, 1.0]));
+                return vec![CmdArrow { base: origin, dir: up, len: arrow_len, key: "sharp" }];
+            }
+        }
+    }
+
+    // 4. Standalone default
+    vec![CmdArrow { base: [0.0, 0.0, 15.0], dir: [0.0, 0.0, 1.0], len: arrow_len, key: "sharp" }]
+}
+
 /// THE HANDLE ARROWS OF THE COMMAND IN HAND, as they are drawn and as they are grabbed: the arrow of a value along a
 /// direction (a face pushed, thickened, shelled, a split, a datum plane's offset - `face_arrow_geometry`), or the three
 /// arrows of a position along X, Y and Z (a datum point by its coordinates, a datum axis by its origin). Reported
 /// behaviour: the datum tools had no arrow to drag, their values were typed only.
 pub fn handle_arrows(pn: &Painting) -> Vec<CmdArrow> {
+    if pn.armed.cmd_kind() == 7 {
+        let ha = hole_manipulator_arrows(pn);
+        if !ha.is_empty() {
+            return ha;
+        }
+    }
+    if pn.armed.cmd_kind() == 37 {
+        let sa = subdiv_manipulator_arrows(pn);
+        if !sa.is_empty() {
+            return sa;
+        }
+    }
     if let (Some(key), Some((o, tip, n))) = (face_arrow_key(pn.armed), face_arrow_geometry(pn)) {
         let len = (tip[0] - o[0]) * n[0] + (tip[1] - o[1]) * n[1] + (tip[2] - o[2]) * n[2];
         return vec![CmdArrow { base: o, dir: n, len, key }];
+    }
+    if let Some(gizmo) = edge_radius_geometry(pn) {
+        return vec![CmdArrow { base: gizmo.origin, dir: gizmo.normal, len: gizmo.radius, key: gizmo.param_key }];
     }
     let keys: Option<[&'static str; 3]> = match pn.armed.cmd_kind() {
         21 if pn.datum.pt_mode == 0 => Some(["x", "y", "z"]),
@@ -9759,7 +10014,18 @@ pub fn drag_handle(cmd: &mut FeatCommand, regen: &mut Rebuilding, hs: &Handles, 
             if denom < 1e-6 {
                 return;
             }
-            set(cmd, a.key, cmd_val(cmd, a.key) + f64::from(step.by.x * pd.x + step.by.y * pd.y) * l / denom, 2);
+            let delta = f64::from(step.by.x * pd.x + step.by.y * pd.y) * l / denom;
+            let factor = if a.key == "diameter" { 2.0 } else { 1.0 };
+            let new_val = if a.key == "diameter" {
+                (cmd_val(cmd, a.key) + delta * factor).max(0.1)
+            } else if a.key == "depth" {
+                (cmd_val(cmd, a.key) + delta).max(0.1)
+            } else if a.key == "sharp" {
+                (cmd_val(cmd, a.key) + delta * 0.1).clamp(0.0, 10.0)
+            } else {
+                cmd_val(cmd, a.key) + delta
+            };
+            set(cmd, a.key, new_val, if a.key == "sharp" { 1 } else { 2 });
         }
         Some(Handle::Ring(key)) => {
             let Some(r) = hs.rings.iter().find(|r| r.key == key) else { return };

@@ -106,6 +106,8 @@ pub(crate) fn prepare_the_process() {
     // THE BREADCRUMB SINK. Opening an edit records what a person just did; the crate of records does not
     // know what a crash report is, so the application plugs its trail in here, once.
     qymcad_ui_state::set_step_recorder(crate::crash::note_step);
+    // Register desktop event handlers for files opened by the system (e.g. double-click in macOS Finder).
+    crate::system_open::install_open_document_handler();
 }
 
 /// THE PROGRAM AS IT COMES UP, before the first frame: fonts, the settings a previous run kept in `storage`,
@@ -114,6 +116,7 @@ pub(crate) fn prepare_the_process() {
 pub(crate) fn start_the_program(ctx: &egui::Context, storage: Option<&dyn eframe::Storage>) -> App {
     // the Phosphor icon font (without it the icon glyphs render as empty boxes)
     install_fonts(ctx);
+    crate::system_open::install_open_document_handler();
 
     let mut app = App::default();
     // A CRASH FILE NOBODY IS TOLD ABOUT IS THE SAME AS NO CRASH FILE. EVERY unseen report from
@@ -139,30 +142,35 @@ pub(crate) fn start_the_program(ctx: &egui::Context, storage: Option<&dyn eframe
         // than here. The decision used to be "always reopen the last project" with nothing to say
         // otherwise, and it lived in this closure - which no check can run, so it was a decision
         // nobody measured.
-        let last = eframe::get_value::<Option<String>>(storage, "last_project").flatten();
-        match qymcad_ui_state::opening(&app.set, last.as_deref()) {
-            qymcad_ui_state::Opening::LastProject(path) => {
-                app.disk.io.startup = Some(path); // loaded asynchronously on the first frame (the splash with the spinner)
-            }
-            qymcad_ui_state::Opening::Empty { start_screen } => {
-                // AN EMPTY DOCUMENT IS EMPTY: the root and nothing else. `App::default` hands out a
-                // document with a part in it, which is right for a check that needs somewhere to
-                // draw and wrong for the first minute of a person - reported as "a person opens the
-                // CAD and sees an empty part".
-                // A FIRST START MEETS A PERSON WITH A CUBE: a part of a sketch and its extrusion, to step into and see
-                // how the work goes here (decided 25.09). Later an empty document is empty - a fresh one, not the
-                // default's part left standing under a root made active.
-                app.project = Project::default();
-                if first_start {
-                    app.project.cube_sample();
-                } else {
-                    app.project.new_empty_document();
+        let handed = crate::system_open::startup_path();
+        if let Some(path) = handed {
+            app.disk.io.startup = Some(path);
+        } else {
+            let last = eframe::get_value::<Option<String>>(storage, "last_project").flatten();
+            match qymcad_ui_state::opening(&app.set, last.as_deref()) {
+                qymcad_ui_state::Opening::LastProject(path) => {
+                    app.disk.io.startup = Some(path); // loaded asynchronously on the first frame (the splash with the spinner)
                 }
-                // the keys of "saved" and "committed" were taken of the document `App::default` made; the empty one
-                // is another document, and without taking them again a fresh start called itself unsaved
-                app.disk.edits.committed_key = doc_key(&app.project);
-                app.disk.edits.saved_key = edit_key(&app.draw_ctx());
-                app.win.show_start(start_screen);
+                qymcad_ui_state::Opening::Empty { start_screen } => {
+                    // AN EMPTY DOCUMENT IS EMPTY: the root and nothing else. `App::default` hands out a
+                    // document with a part in it, which is right for a check that needs somewhere to
+                    // draw and wrong for the first minute of a person - reported as "a person opens the
+                    // CAD and sees an empty part".
+                    // A FIRST START MEETS A PERSON WITH A CUBE: a part of a sketch and its extrusion, to step into and see
+                    // how the work goes here (decided 25.09). Later an empty document is empty - a fresh one, not the
+                    // default's part left standing under a root made active.
+                    app.project = Project::default();
+                    if first_start {
+                        app.project.cube_sample();
+                    } else {
+                        app.project.new_empty_document();
+                    }
+                    // the keys of "saved" and "committed" were taken of the document `App::default` made; the empty one
+                    // is another document, and without taking them again a fresh start called itself unsaved
+                    app.disk.edits.committed_key = doc_key(&app.project);
+                    app.disk.edits.saved_key = edit_key(&app.draw_ctx());
+                    app.win.show_start(start_screen);
+                }
             }
         }
     }
@@ -2348,6 +2356,7 @@ impl App {
             "part.chamfer" => self.start_feat_cmd(5),
             "part.shell" => self.start_feat_cmd(6),
             "part.hole" => self.start_feat_cmd(7),
+            "part.subdivide" => self.start_feat_cmd(37),
             "part.mirror" => self.start_feat_cmd(16),
             "part.box" => self.start_prim_cmd(10),
             "part.cylinder" => self.start_prim_cmd(11),
@@ -3798,6 +3807,51 @@ pub(crate) fn tick_joint_anim(joint_anim: &mut Option<JointAnim>, project: &mut 
 
 /// Dragging a body gizmo's ring: accumulate the turn, in degrees, into the gizmo's own drag record.
 ///
+/// Drive a body gizmo drag step with X/Y/Z axis constraint keys and delta accumulation.
+pub(crate) fn body_gizmo_drag_step(
+    body_giz: &mut BodyGizmo,
+    set: &qymcad_ui_state::Settings,
+    ctx: &egui::Context,
+    resp: &egui::Response,
+    scr: &Screen,
+    project: &Project,
+    regen: &mut Rebuilding,
+) -> bool {
+    body_giz.snap = set.snap.on || ctx.input(|i| i.modifiers.ctrl || i.modifiers.command);
+    if ctx.input(|i| i.key_pressed(egui::Key::X)) {
+        if body_giz.axis.is_some() {
+            body_giz.axis = Some(0);
+        }
+        if body_giz.ring.is_some() {
+            body_giz.ring = Some(0);
+        }
+    } else if ctx.input(|i| i.key_pressed(egui::Key::Y)) {
+        if body_giz.axis.is_some() {
+            body_giz.axis = Some(1);
+        }
+        if body_giz.ring.is_some() {
+            body_giz.ring = Some(1);
+        }
+    } else if ctx.input(|i| i.key_pressed(egui::Key::Z)) {
+        if body_giz.axis.is_some() {
+            body_giz.axis = Some(2);
+        }
+        if body_giz.ring.is_some() {
+            body_giz.ring = Some(2);
+        }
+    }
+    if resp.dragged() {
+        if body_giz.axis.is_some() {
+            body_gizmo_axis_drag(body_giz, scr, project, regen, resp.drag_delta());
+        } else if body_giz.ring.is_some() {
+            if let Some(cur) = resp.interact_pointer_pos() {
+                body_gizmo_ring_drag(body_giz, scr, project, regen, cur, resp.drag_delta());
+            }
+        }
+    }
+    resp.drag_stopped()
+}
+
 /// WHICH BODY AND WHICH RING are read from the gizmo, not passed in. They used to be two more arguments,
 /// filled at the call site out of the very same two fields - a second path by which they could disagree.
 pub(crate) fn body_gizmo_ring_drag(body_giz: &mut BodyGizmo, scr: &Screen, project: &Project, regen: &mut Rebuilding, cursor: Pos2, d: egui::Vec2) {
@@ -4161,6 +4215,7 @@ mod push_face_flow;
 mod split_flow;
 mod templates_flow;
 mod fillet_vertex_flow;
+mod edge_radius_handle_flow;
 mod thicken_flow;
 mod loft_surface_flow;
 mod patch_flow;

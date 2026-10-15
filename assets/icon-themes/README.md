@@ -261,7 +261,7 @@ Below is the complete dictionary of icons recognized across the 5 categories:
 
 ---
 
-### 7.3. Category `part/` — 3D Modeling, Primitives, Booleans & Surfaces (34 icons)
+### 7.3. Category `part/` — 3D Modeling, Primitives, Booleans & Surfaces (35 icons)
 
 | Icon Path | Function & Description |
 | :--- | :--- |
@@ -299,6 +299,7 @@ Below is the complete dictionary of icons recognized across the 5 categories:
 | `part/array_circular.svg` | **3D Circular Pattern:** Replicate 3D features or solid bodies rotationally around an axis. |
 | `part/mirror.svg` | **3D Mirror:** Mirror 3D features or bodies across a planar symmetry datum. |
 | `part/section.svg` | **Section View:** Cut a live interactive clipping cross-section through the 3D model. |
+| `part/subdivide.svg` | **Subdivide Mesh:** OpenSubdiv Catmull-Clark subdivision surfaces on mesh cages. |
 
 ---
 

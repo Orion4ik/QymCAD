@@ -57,3 +57,9 @@ CLAUDE.local.md
 
 # Samples that cannot be distributed: a link to them in a working copy, checks pass them over when absent
 /samples
+
+# AI & MCP (do not commit)
+crates/qymcad-ai/
+docs/mcp_agent_dashboard.html
+docs/mcp_roadmap_checklist.md
+docs/manual/ai-and-mcp.md

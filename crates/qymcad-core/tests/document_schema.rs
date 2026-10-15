@@ -13,10 +13,11 @@
 /// The field names of a struct, read from the source. A crude parse, but exact for the declaration style used
 /// here.
 fn fields_of(src: &str, decl: &str) -> Vec<String> {
-    let a = src.find(decl).unwrap_or_else(|| panic!("the struct {decl} was not found"));
-    let b = src[a..].find("\n}\n").map(|i| a + i).unwrap_or(src.len());
+    let src_clean = src.replace('\r', "");
+    let a = src_clean.find(decl).unwrap_or_else(|| panic!("the struct {decl} was not found"));
+    let b = src_clean[a..].find("\n}\n").map(|i| a + i).unwrap_or(src_clean.len());
     let mut out = Vec::new();
-    for line in src[a..b].lines() {
+    for line in src_clean[a..b].lines() {
         let t = line.trim();
         if !t.starts_with("pub ") || t.starts_with("pub fn") {
             continue;

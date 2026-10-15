@@ -1521,6 +1521,30 @@ impl Project {
         })
     }
 
+    fn prep_subdivide(&mut self, src: Id, body: Id, levels: u32, sharp: f64) -> crate::feature::KernelJob {
+        let (cage, parents) = if src != 0 {
+            let Some(mesh) = self.mesh_index(src).map(|i| self.bodies[i].mesh.clone()) else {
+                return crate::feature::KernelJob::refused(crate::errors::CoreError::SourceBodyNotBuilt);
+            };
+            let cage_verts: Vec<[f64; 3]> = mesh.verts.iter().map(|v| [v.x, v.y, v.z]).collect();
+            let cage_faces: Vec<Vec<u32>> = mesh.tris.iter().map(|t| vec![t[0], t[1], t[2]]).collect();
+            (crate::subdiv::Cage { verts: cage_verts, faces: cage_faces }, vec![src])
+        } else {
+            (crate::subdiv::Cage::cube(30.0), Vec::new())
+        };
+        crate::feature::KernelJob::new(parents, move |k| {
+            let mut subd = crate::subdiv::OpenSubdivCage::new(cage);
+            if sharp > 1e-4 {
+                subd.set_all_edges_crease(sharp);
+            }
+            let refined = subd.subdivided(levels.clamp(1, 4) as usize);
+            let new_tris = refined.to_triangles();
+            let new_verts = refined.cage.verts.iter().map(|v| crate::geom::Point3::new(v[0], v[1], v[2])).collect();
+            let subd_mesh = crate::geom::Mesh { verts: new_verts, tris: new_tris, norms: Vec::new() };
+            k.mesh_solid(body, &subd_mesh)
+        })
+    }
+
     fn prep_pushface(&mut self, p: &Pass, src: Id, face: &crate::refs::Ref, dist: f64, body: Id) -> crate::feature::KernelJob {
         let dist = eval_dim(p.dims, "dist", dist, p.vars);
         if p.kernel.body_is_sheet(src) {
@@ -2112,12 +2136,23 @@ impl Project {
                 Err(_) if picked => crate::feature::KernelJob::refused(crate::errors::CoreError::FaceNotFound),
                 resolved => {
                     // THE HOLE STANDS WHERE IT WAS PLACED: the stored point brought onto the face as it stands now
-                    // (along its normal), not the face's centre - two holes in one face stood in each other, the
-                    // second green and drilling nothing. A hole placed before holds the centre it was given then.
+                    // (along its normal), or evaluated from parametric off_u and off_v dimensions relative to the face frame.
                     let (point, normal) = match resolved {
                         Ok(c) => {
-                            let off = (0..3).map(|i| (point[i] - c.centroid[i]) * c.normal[i]).sum::<f64>();
-                            ([point[0] - off * c.normal[0], point[1] - off * c.normal[1], point[2] - off * c.normal[2]], c.normal)
+                            let off_u_present = p.dims.and_then(|m| m.get("off_u")).is_some_and(|e| !e.trim().is_empty());
+                            let off_v_present = p.dims.and_then(|m| m.get("off_v")).is_some_and(|e| !e.trim().is_empty());
+                            if off_u_present || off_v_present {
+                                let f = crate::feature::PlaneFrame::from_origin_normal(c.centroid, c.normal, 0.0);
+                                let d = [point[0] - c.centroid[0], point[1] - c.centroid[1], point[2] - c.centroid[2]];
+                                let cur_u = f.x[0] * d[0] + f.x[1] * d[1] + f.x[2] * d[2];
+                                let cur_v = f.y[0] * d[0] + f.y[1] * d[1] + f.y[2] * d[2];
+                                let u = p.dim("off_u", cur_u);
+                                let v = p.dim("off_v", cur_v);
+                                ([c.centroid[0] + f.x[0] * u + f.y[0] * v, c.centroid[1] + f.x[1] * u + f.y[1] * v, c.centroid[2] + f.x[2] * u + f.y[2] * v], c.normal)
+                            } else {
+                                let off = (0..3).map(|i| (point[i] - c.centroid[i]) * c.normal[i]).sum::<f64>();
+                                ([point[0] - off * c.normal[0], point[1] - off * c.normal[1], point[2] - off * c.normal[2]], c.normal)
+                            }
                         }
                         Err(_) => (point, normal),
                     };
@@ -2416,6 +2451,7 @@ impl Project {
             FeatureKind::Stitch { parts, tol, body } => (*body, self.prep_stitch(p, parts, *tol, *body)),
             FeatureKind::MeshSolid { src, body, simplify } => (*body, self.prep_mesh_solid(*src, *body, *simplify)),
             FeatureKind::MeshRecognised { src, body, tol, sharp, simplify } => (*body, self.prep_mesh_recognised(*src, *body, *tol, *sharp, *simplify)),
+            FeatureKind::Subdivide { src, body, levels, sharp } => (*body, self.prep_subdivide(*src, *body, *levels, *sharp)),
             FeatureKind::Thicken { src, face, thickness, join, body } => (*body, self.prep_thicken(p, *src, *face, *thickness, *join, *body)),
             FeatureKind::SplitFace { src, plane, datum, offset, body, face } => (*body, self.prep_splitface(p, *src, self.op_plane(*plane, *datum, *face), *offset, *body)),
             FeatureKind::Draft { src, faces, neutral, angle, flip, body } => (*body, self.prep_draft(p, *src, faces, DraftShape { neutral: neutral.clone(), angle: *angle, flip: *flip }, *body)),

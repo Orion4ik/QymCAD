@@ -181,6 +181,7 @@ pub fn feat_cmd_name(armed: &qymcad_ui_state::Armed, feat: qymcad_ui_state::Feat
         32 => qymcad_i18n::tr("f-patch"),
         24 => qymcad_i18n::tr("f-thread"),
         35 => qymcad_i18n::tr("f-recognise"),
+        37 => qymcad_i18n::tr("f-subdivide"),
         _ => qymcad_i18n::tr("f-operation"),
     }
 }
@@ -475,6 +476,7 @@ pub fn cmd_hint(armed: &qymcad_ui_state::Armed, gsel: &qymcad_ui_state::GeomSele
         32 => qymcad_i18n::tr("hint-patch"),
         33 => qymcad_i18n::tr("hint-stitch"),
         35 => qymcad_i18n::tr("hint-recognise"),
+        37 => qymcad_i18n::tr("hint-subdivide"),
         34 => qymcad_i18n::tr(if trim.keep.is_none() { "hint-trim" } else { "hint-trim-tool" }),
         31 => qymcad_i18n::tr(if gsel.faces.is_empty() { "hint-surface-replace" } else { "hint-surface-replace-pick" }),
         27 => qymcad_i18n::tr("hint-cut-plane"),
@@ -669,6 +671,30 @@ pub fn apply_recognise_cmd(pc: &mut qymcad_ui_state::PartCtx) -> Option<Id> {
     } else {
         pc.project.add_mesh_recognised(src, qymcad_ui_state::cmd_val(pc.cmd, "tol"), qymcad_ui_state::cmd_val(pc.cmd, "sharp"), simplify)
     };
+    Some(body)
+}
+
+/// SUBDIVIDE: OpenSubdiv Catmull-Clark subdivision of a body's cage with edge creasing.
+pub fn start_subdiv_cmd(pc: &mut qymcad_ui_state::PartCtx) {
+    pc.cmd.open(pc.armed, 37, *pc.mode_3d);
+    qymcad_ui_state::borrow_view(*pc.cam, *pc.mode_3d, *pc.view, pc.view_restore);
+    *pc.mode_3d = true;
+    pc.cmd.params = vec![qymcad_ui_state::CmdParam::new("f-subdiv-levels", "levels", 2.0, 1.0, 4.0), qymcad_ui_state::CmdParam::new("f-subdiv-sharp", "sharp", 0.0, 0.0, 10.0)];
+    *pc.status = qymcad_i18n::tr("msg-subdivide");
+}
+
+pub fn apply_subdiv_cmd(pc: &mut qymcad_ui_state::PartCtx) -> Option<Id> {
+    let src = qymcad_ui_state::op_target_body(&qymcad_ui_state::DrawCtx { cam: pc.cam, set: pc.set, scheme: pc.scheme, project: pc.project, active_path: pc.active_path }, *pc.sel)
+        .or_else(|| pc.project.bodies.first().map(|b| b.id));
+    let Some(src) = src else {
+        *pc.status = qymcad_i18n::tr("msg-subdivide");
+        return None;
+    };
+    let levels = (qymcad_ui_state::cmd_val(pc.cmd, "levels") as u32).clamp(1, 4);
+    let sharp = qymcad_ui_state::cmd_val(pc.cmd, "sharp").clamp(0.0, 10.0);
+    let body = pc.project.add_subdivide(src, levels, sharp);
+    store_cmd_exprs(pc.cmd, pc.project, body);
+    *pc.status = qymcad_i18n::tr("cmd-subdivide-done");
     Some(body)
 }
 
@@ -1241,12 +1267,30 @@ pub fn start_body_cmd(pc: &mut qymcad_ui_state::PartCtx, cmd: u8) {
         *pc.status = qymcad_i18n::tr("msg-no-body");
         return;
     }
+    let preselected_edge = match *pc.sel {
+        qymcad_ui_state::Sel::Edge(b, eid) => Some((b, eid)),
+        _ => None,
+    };
+    let prev_gsel_edges = (!pc.gsel.edges.is_empty()).then(|| (pc.gsel.last_edge, std::mem::take(&mut pc.gsel.edges)));
     pc.cmd.open(pc.armed, cmd, *pc.mode_3d); // a clean slate, then open
                                              // a new feature, not an edit
     *pc.mode_3d = true;
     pc.gsel.edges.clear();
     pc.gsel.faces.clear(); // a shell picks faces from scratch
     pc.gsel.faces_body = None; // the scope of the multiple face selection
+    if let Some((b, eid)) = preselected_edge {
+        if matches!(cmd, 4 | 5) {
+            pc.gsel.edges.insert(eid);
+            pc.gsel.last_edge = Some((eid, b));
+            refresh_edges(pc);
+        }
+    } else if let Some((last, edges)) = prev_gsel_edges {
+        if matches!(cmd, 4 | 5) {
+            pc.gsel.edges = edges;
+            pc.gsel.last_edge = last;
+            refresh_edges(pc);
+        }
+    }
     pc.opts.shell_side = qymcad_core::feature::ShellSide::Inward; // a shell goes INWARDS by default
     pc.chamfer.mode = qymcad_core::feature::ChamferMode::Symmetric; // a chamfer is symmetric by default
     pc.chamfer.flip = false;
@@ -1444,6 +1488,10 @@ pub fn cmd_ready(pc: &mut qymcad_ui_state::PartCtx) -> bool {
         20 => pc.datum.plane_pick.is_some(),                       // datum plane: a reference is picked by click
         21 => pc.datum.pt_mode == 0 || pc.datum.pt_vert.is_some(), // coordinates in fields, or a vertex picked
         22 => pc.datum.axis_mode == 1 || (pc.datum.axis_mode == 2 && pc.datum.axis_pts.len() == 2) || pc.datum.axis_ref.is_some(),
+        37 => {
+            qymcad_ui_state::op_target_body(&qymcad_ui_state::DrawCtx { cam: pc.cam, set: pc.set, scheme: pc.scheme, project: pc.project, active_path: pc.active_path }, *pc.sel).is_some()
+                || !pc.project.bodies.is_empty()
+        }
         _ => false,
     }
 }
@@ -1509,7 +1557,7 @@ pub fn cmd_anchor_screen(pc: &mut qymcad_ui_state::PartCtx, rect: Rect) -> Optio
         //
         // The shell, the draft, pushing and removing a face, thickening - all belong here. What helps
         // with aiming is not the popup but THE HANDLE: it sits on the geometry and covers nothing.
-        4 | 5 | 6 | 7 | 17 | 18 | 23 | 24 | 25 | 26 | 27 | 28 | 29 | 30 | 31 | 32 | 33 | 34 | 35 | 36 => {
+        4 | 5 | 6 | 7 | 17 | 18 | 23 | 24 | 25 | 26 | 27 | 28 | 29 | 30 | 31 | 32 | 33 | 34 | 35 | 36 | 37 => {
             let b =
                 pc.recognise.src.or_else(|| pc.stitch_parts.first().copied()).or(pc.trim.keep.map(|(b, _)| b)).or(pc.gsel.faces_body).or_else(|| {
                     qymcad_ui_state::op_target_body(&qymcad_ui_state::DrawCtx { cam: pc.cam, set: pc.set, scheme: pc.scheme, project: pc.project, active_path: pc.active_path }, *pc.sel)
@@ -1903,12 +1951,24 @@ pub fn start_push_face_cmd(pc: &mut qymcad_ui_state::PartCtx) {
         *pc.status = qymcad_i18n::tr("msg-no-body");
         return;
     }
+    let preselected_face = match *pc.sel {
+        qymcad_ui_state::Sel::Face(mi, fi) => pc.project.mesh_id(mi).zip(pc.project.bodies.get(mi).and_then(|b| b.faces.get(fi)).map(|f| f.id)),
+        _ => None,
+    };
+    let prev_gsel_faces = (!pc.gsel.faces.is_empty()).then(|| (pc.gsel.faces_body, std::mem::take(&mut pc.gsel.faces)));
     pc.cmd.open(pc.armed, 25, *pc.mode_3d);
     qymcad_ui_state::borrow_view(*pc.cam, *pc.mode_3d, *pc.view, pc.view_restore); // the view is borrowed and returned on exit
     *pc.mode_3d = true;
     pc.gsel.edges.clear();
-    pc.gsel.faces.clear(); // the face is picked afresh: a pre-selection would only confuse here
+    pc.gsel.faces.clear();
     pc.gsel.faces_body = None;
+    if let Some((b, fid)) = preselected_face {
+        pc.gsel.faces.insert(fid);
+        pc.gsel.faces_body = Some(b);
+    } else if let Some((Some(b), faces)) = prev_gsel_faces {
+        pc.gsel.faces = faces;
+        pc.gsel.faces_body = Some(b);
+    }
     pc.cmd.params = vec![qymcad_ui_state::CmdParam::new("f-offset2", "dist", 5.0, -100000.0, 100000.0).nonzero()];
     *pc.status = qymcad_i18n::tr("msg-push-face");
 }
@@ -2353,7 +2413,14 @@ pub fn click_on_nothing(pc: &mut qymcad_ui_state::PartCtx) {
 /// into the two shifts from the face's centre along its own axes - the fields at the geometry, so the centre can then
 /// be typed exactly.
 pub fn place_hole_at(pc: &mut qymcad_ui_state::PartCtx, rect: Rect, screen: Pos2) {
-    let (7, qymcad_ui_state::Sel::Face(mi, fi)) = (pc.armed.cmd_kind(), *pc.sel) else { return };
+    if pc.armed.cmd_kind() != 7 {
+        return;
+    }
+    let face_sel = match *pc.sel {
+        qymcad_ui_state::Sel::Face(mi, fi) => Some((mi, fi)),
+        _ => qymcad_ui_state::hole_face_indices_from(*pc.sel, &*pc.project, &*pc.gsel, pc.cmd.edit),
+    };
+    let Some((mi, fi)) = face_sel else { return };
     let (Some(body), Some(face)) = (pc.project.mesh_id(mi), pc.project.bodies.get(mi).and_then(|b| b.faces.get(fi))) else { return };
     let (c, n) = ([face.centroid.x, face.centroid.y, face.centroid.z], face.normal);
     // the ray in the body's own frame: the view shows the body through its placement in the context
@@ -2366,13 +2433,15 @@ pub fn place_hole_at(pc: &mut qymcad_ui_state::PartCtx, rect: Rect, screen: Pos2
     // the same face clicked where the hole already stands (within 0.5 mm) lets it go; anywhere else on it moves the
     // hole there
     let here = (u - qymcad_ui_state::cmd_val(pc.cmd, "off_u")).hypot(v - qymcad_ui_state::cmd_val(pc.cmd, "off_v")) < 0.5;
-    if pc.gsel.faces.contains(&face.id) && here {
+    if pc.cmd.edit.is_none() && pc.gsel.faces.contains(&face.id) && here {
         pc.gsel.faces.clear();
+        pc.gsel.faces_body = None;
         *pc.sel = qymcad_ui_state::Sel::None;
         return;
     }
     pc.gsel.faces.clear();
     pc.gsel.faces.insert(face.id);
+    pc.gsel.faces_body = Some(body);
     for (key, val) in [("off_u", u), ("off_v", v)] {
         if let Some(p) = pc.cmd.params.iter_mut().find(|p| p.key == key) {
             p.val = (val * 1000.0).round() / 1000.0;
@@ -2760,7 +2829,12 @@ pub fn update_feat(pc: &mut qymcad_ui_state::PartCtx, fid: Id) -> Option<Id> {
             let k = qymcad_core::feature::FaceKey { index: fi as u32, centroid: [face.centroid.x, face.centroid.y, face.centroid.z], normal: face.normal, id: face.id };
             (k, hole_centre(k.centroid, k.normal, qymcad_ui_state::cmd_val(pc.cmd, "off_u"), qymcad_ui_state::cmd_val(pc.cmd, "off_v")), k.normal)
         }),
-        _ => None,
+        _ => qymcad_ui_state::hole_face_indices_from(*pc.sel, &*pc.project, &*pc.gsel, pc.cmd.edit).and_then(|(mi, fi)| {
+            pc.project.bodies.get(mi).and_then(|b| b.faces.get(fi)).map(|face| {
+                let k = qymcad_core::feature::FaceKey { index: fi as u32, centroid: [face.centroid.x, face.centroid.y, face.centroid.z], normal: face.normal, id: face.id };
+                (k, hole_centre(k.centroid, k.normal, qymcad_ui_state::cmd_val(pc.cmd, "off_u"), qymcad_ui_state::cmd_val(pc.cmd, "off_v")), k.normal)
+            })
+        }),
     };
     let reach = qymcad_ui_state::cmd_reach(pc.cmd, *pc.feat);
     let down = if pc.cmd.extent.two_sided() { qymcad_ui_state::cmd_val(pc.cmd, "down").abs() } else { 0.0 };
@@ -2996,9 +3070,16 @@ pub fn update_feat(pc: &mut qymcad_ui_state::PartCtx, fid: Id) -> Option<Id> {
                 if let Some((k, p, nrm)) = hole_face {
                     // editing the face recomputes the reference to it along with the centre and the normal
                     // of the hole. A hand pick is a query of `Id`: one particular face was pointed at.
-                    *face = qymcad_core::refs::Ref::one(k.id, qymcad_core::refs::Fingerprint { centroid: k.centroid, normal: k.normal });
+                    if matches!(*pc.sel, qymcad_ui_state::Sel::Face(..)) || face.query == qymcad_core::refs::Query::Id(0) {
+                        *face = qymcad_core::refs::Ref::one(k.id, qymcad_core::refs::Fingerprint { centroid: k.centroid, normal: k.normal });
+                    }
                     *point = p;
                     *normal = nrm;
+                } else if !matches!(face.query, qymcad_core::refs::Query::Id(0)) {
+                    let u = qymcad_ui_state::cmd_val(pc.cmd, "off_u");
+                    let v = qymcad_ui_state::cmd_val(pc.cmd, "off_v");
+                    *point = hole_centre(face.hint.centroid, face.hint.normal, u, v);
+                    *normal = face.hint.normal;
                 }
             }
             FeatureKind::Thread { spec, length, lead_in, lead_out, .. } => {
@@ -3073,6 +3154,10 @@ pub fn update_feat(pc: &mut qymcad_ui_state::PartCtx, fid: Id) -> Option<Id> {
                 *r = p_r;
                 *n = p_n;
                 *h = p_ph;
+            }
+            FeatureKind::Subdivide { levels, sharp, .. } => {
+                *levels = (qymcad_ui_state::cmd_val(pc.cmd, "levels") as u32).clamp(1, 4);
+                *sharp = qymcad_ui_state::cmd_val(pc.cmd, "sharp").clamp(0.0, 10.0);
             }
             _ => return None,
         }
@@ -3170,6 +3255,7 @@ pub fn apply_feat_cmd_inner(pc: &mut qymcad_ui_state::PartCtx) {
             32 => apply_patch_cmd(pc),
             33 => apply_stitch_cmd(pc.cmd, pc.project, pc.status, pc.stitch_parts),
             35 => apply_recognise_cmd(pc),
+            37 => apply_subdiv_cmd(pc),
             34 => apply_trim_cmd(pc.project, pc.status, pc.trim),
             27 => apply_split_cmd(pc),
             28 => apply_thicken_cmd(pc),
@@ -3633,6 +3719,15 @@ pub fn start_feat_cmd_edit(pc: &mut qymcad_ui_state::PartCtx, fid: Id) {
             pc.trim.tool = Some(tool);
             pc.cmd.params = vec![];
         }
+        FeatureKind::Subdivide { src, levels, sharp, .. } => {
+            pc.cmd.open(pc.armed, 37, was_3d);
+            qymcad_ui_state::select_body(&mut *pc.project, &mut *pc.sel, &mut *pc.view, src);
+            pc.cmd.params = vec![
+                cmd_param_from(&*pc.project, fid, "f-subdiv-levels", "levels", levels as f64, 1.0, 4.0),
+                cmd_param_from(&*pc.project, fid, "f-subdiv-sharp", "sharp", sharp, 0.0, 10.0),
+            ];
+            *pc.status = qymcad_i18n::tr("msg-subdivide");
+        }
         FeatureKind::RemoveFace { src, ref faces, .. } => {
             pc.cmd.open(pc.armed, 26, was_3d);
             qymcad_ui_state::select_body(&mut *pc.project, &mut *pc.sel, &mut *pc.view, src);
@@ -3672,19 +3767,26 @@ pub fn start_feat_cmd_edit(pc: &mut qymcad_ui_state::PartCtx, fid: Id) {
                 if let Some(si) = pc.project.sketch_index(sketch) {
                     *pc.sel = qymcad_ui_state::Sel::Sketch(si);
                 }
-            } else if let Some((mi, fi)) =
-                face_desc_of(&face).and_then(|d| qymcad_pick::resolve_face_sel(&*pc.project, src, &qymcad_core::feature::FaceKey { index: 0, centroid: [0.0; 3], normal: [0.0, 0.0, 1.0], id: d }))
-            {
-                // restore THE FACE SELECTION by its persistent `FaceKey`, then highlight it
-                *pc.sel = qymcad_ui_state::Sel::Face(mi, fi);
+            } else {
+                pc.gsel.faces = live_picks(&*pc.project, src, &face, true);
+                pc.gsel.faces_body = Some(src);
+                if let Some((mi, fi)) =
+                    face_desc_of(&face).and_then(|d| qymcad_pick::resolve_face_sel(&*pc.project, src, &qymcad_core::feature::FaceKey { index: 0, centroid: [0.0; 3], normal: [0.0, 0.0, 1.0], id: d }))
+                {
+                    // restore THE FACE SELECTION by its persistent `FaceKey`, then highlight it
+                    *pc.sel = qymcad_ui_state::Sel::Face(mi, fi);
+                }
             }
             pc.cmd.params = vec![cmd_param_from(&*pc.project, fid, "f-diameter", "diameter", diameter, 0.1, 10000.0), cmd_param_from(&*pc.project, fid, "f-depth", "depth", depth, 0.1, 10000.0)];
             // where it stands on its face, as the two shifts from the face centre the fields hold
-            let (u, v) = match *pc.sel {
-                qymcad_ui_state::Sel::Face(mi, fi) if sketch == 0 => {
-                    pc.project.bodies.get(mi).and_then(|b| b.faces.get(fi)).map_or((0.0, 0.0), |f| hole_shifts([f.centroid.x, f.centroid.y, f.centroid.z], f.normal, point))
-                }
-                _ => (0.0, 0.0),
+            let (u, v) = if sketch == 0 {
+                let resolved_face = match *pc.sel {
+                    qymcad_ui_state::Sel::Face(mi, fi) => pc.project.bodies.get(mi).and_then(|b| b.faces.get(fi)),
+                    _ => qymcad_ui_state::hole_face_indices_from(*pc.sel, &*pc.project, &*pc.gsel, pc.cmd.edit).and_then(|(mi, fi)| pc.project.bodies.get(mi).and_then(|b| b.faces.get(fi))),
+                };
+                resolved_face.map_or_else(|| hole_shifts(face.hint.centroid, face.hint.normal, point), |f| hole_shifts([f.centroid.x, f.centroid.y, f.centroid.z], f.normal, point))
+            } else {
+                (0.0, 0.0)
             };
             pc.cmd.params.push(cmd_param_from(&*pc.project, fid, "f-hole-u", "off_u", u, -100000.0, 100000.0));
             pc.cmd.params.push(cmd_param_from(&*pc.project, fid, "f-hole-v", "off_v", v, -100000.0, 100000.0));
@@ -5041,6 +5143,7 @@ pub fn feat_command_bar(pc: &mut qymcad_ui_state::PartCtx, ui: &mut egui::Ui) {
             33 => &qymcad_i18n::tr("f-stitch"),
             34 => &qymcad_i18n::tr("feat-name-trim"),
             35 => &qymcad_i18n::tr("f-recognise"),
+            37 => &qymcad_i18n::tr("feat-name-subdivide"),
             _ => &qymcad_i18n::tr("cmd-command"),
         };
         let (mut apply, mut cancel, mut reselect) = (false, false, false);
@@ -5827,6 +5930,19 @@ pub fn feat_command_bar(pc: &mut qymcad_ui_state::PartCtx, ui: &mut egui::Ui) {
                         }
                     }
                 }
+                37 => {
+                    ui.label(qymcad_i18n::tr("f-subdiv-levels"));
+                    for lvl in 1..=4u32 {
+                        let cur = qymcad_ui_state::cmd_val(pc.cmd, "levels") as u32;
+                        if ui.selectable_label(cur == lvl, format!("{lvl}")).clicked() {
+                            if let Some(p) = pc.cmd.params.iter_mut().find(|p| p.key == "levels") {
+                                p.val = lvl as f64;
+                                p.txt = lvl.to_string();
+                            }
+                            pc.regen.wanted = true;
+                        }
+                    }
+                }
                 _ => {
                     says.tell(cmd_hint(&*pc.armed, &*pc.gsel, &*pc.trim));
                     if let Some(taken) = taken_line(pc) {
@@ -6282,6 +6398,9 @@ pub fn wb_toolbar(bc: &mut qymcad_ui_state::BarCtx, ui: &mut egui::Ui) {
                     // an imported mesh becomes a body a person can work on
                     if qymcad_ui_state::icon_tool(ui, qymcad_ui_state::IconId::PartRecognise, &qymcad_i18n::tr("tb-recognise-hint"), bc.armed.cmd_kind() == 35) {
                         bc.ask.push(qymcad_ui_state::take_or_drop(bc.armed.cmd_kind() == 35, qymcad_ui_state::BarAsk::FeatCmd(35)));
+                    }
+                    if qymcad_ui_state::icon_tool(ui, qymcad_ui_state::IconId::PartSubdivide, &qymcad_i18n::tr("tb-subdivide-hint"), bc.armed.cmd_kind() == 37) {
+                        bc.ask.push(qymcad_ui_state::take_or_drop(bc.armed.cmd_kind() == 37, qymcad_ui_state::BarAsk::FeatCmd(37)));
                     }
                     if qymcad_ui_state::icon_tool(ui, qymcad_ui_state::IconId::PartSplitBody, &qymcad_i18n::tr("tb-split-body-hint"), bc.armed.cmd_kind() == 27) {
                         bc.ask.push(qymcad_ui_state::take_or_drop(bc.armed.cmd_kind() == 27, qymcad_ui_state::BarAsk::FeatCmd(27)));

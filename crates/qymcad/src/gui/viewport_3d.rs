@@ -351,37 +351,9 @@ impl App {
                 qymcad_ui_state::after_placement_change(&mut self.rebuild_ctx());
                 // the source rotated, so the consumers are rebuilt
             }
-        } else if self.dragged.body_giz.axis.is_some() && self.dragged.body_giz.drag.is_some() {
-            // moving a BODY along the grabbed gizmo axis: it accumulates and is committed as a Move feature on release
-            self.dragged.body_giz.snap = self.set.snap.on || ctx.input(|i| i.modifiers.ctrl || i.modifiers.command); // the Snap panel or Ctrl
-            if resp.dragged() {
-                crate::gui::body_gizmo_axis_drag(
-                    &mut self.dragged.body_giz,
-                    &qymcad_ui_state::Screen { cam: &self.viewing.cam, set: &self.set, rect, basis: basis3 },
-                    &self.project,
-                    &mut self.regen,
-                    resp.drag_delta(),
-                );
-            }
-            if resp.drag_stopped() {
-                self.commit_body_gizmo(self.dragged.body_giz.snap);
-            }
-        } else if self.dragged.body_giz.ring.is_some() && self.dragged.body_giz.drag.is_some() {
-            // rotating a BODY by the grabbed gizmo ring
-            self.dragged.body_giz.snap = self.set.snap.on || ctx.input(|i| i.modifiers.ctrl || i.modifiers.command); // the Snap panel or Ctrl
-            if resp.dragged() {
-                if let Some(cur) = resp.interact_pointer_pos() {
-                    crate::gui::body_gizmo_ring_drag(
-                        &mut self.dragged.body_giz,
-                        &qymcad_ui_state::Screen { cam: &self.viewing.cam, set: &self.set, rect, basis: basis3 },
-                        &self.project,
-                        &mut self.regen,
-                        cur,
-                        resp.drag_delta(),
-                    );
-                }
-            }
-            if resp.drag_stopped() {
+        } else if (self.dragged.body_giz.axis.is_some() || self.dragged.body_giz.ring.is_some()) && self.dragged.body_giz.drag.is_some() {
+            let scr = qymcad_ui_state::Screen { cam: &self.viewing.cam, set: &self.set, rect, basis: basis3 };
+            if crate::gui::body_gizmo_drag_step(&mut self.dragged.body_giz, &self.set, ctx, resp, &scr, &self.project, &mut self.regen) {
                 self.commit_body_gizmo(self.dragged.body_giz.snap);
             }
         } else if let Some(pan) = qymcad_ui_state::pan_now(self.set.mouse_nav, ctx, resp) {

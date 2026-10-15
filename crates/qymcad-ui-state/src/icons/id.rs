@@ -97,6 +97,7 @@ pub enum IconId {
     PartStitch,
     PartTrimSurface,
     PartRecognise,
+    PartSubdivide,
 
     // --- 3D Patterns ---
     PartArrayLinear,

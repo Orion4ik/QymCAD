@@ -2558,6 +2558,16 @@ cmd-recognise-asis = Сол күйінде (көпжақ)
 mesh-recognise = Танылған дене
 mesh-solid = Тордан дене
 
+# Subdivide
+f-subdivide = Бөлу
+f-subdiv-levels = Деңгейлер
+f-subdiv-sharp = Үшкірлік
+feat-name-subdivide = Бөлу беті
+tb-subdivide-hint = Бөлу — Catmull-Clark бөлу беті
+hint-subdivide = Бөлу үшін дене немесе торды таңдаңыз
+msg-subdivide = Бөлу үшін денені таңдаңыз, деңгей мен үшкірлікті реттеңіз
+cmd-subdivide-done = Бөлу беті жасалды
+
 # Э2: обрезка поверхности
 tb-trim-surface-hint = Қию — артығын көрші дене бойымен кесіп тастау
 msg-trim = Бет-қабаттың қалатын бөлігін шертіңіз

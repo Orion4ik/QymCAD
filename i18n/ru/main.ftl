@@ -2661,6 +2661,16 @@ cmd-recognise-asis = Как есть (многогранник)
 mesh-recognise = Распознанное тело
 mesh-solid = Тело из сетки
 
+# Subdivide
+f-subdivide = Разбиение
+f-subdiv-levels = Уровни
+f-subdiv-sharp = Резкость
+feat-name-subdivide = Поверхность разбиения
+tb-subdivide-hint = Разбиение — поверхность разбиения Catmull-Clark с резкими ребрами
+hint-subdivide = Выберите тело или сетку для разбиения
+msg-subdivide = Выберите тело для разбиения, настройте уровень и резкость рёбер
+cmd-subdivide-done = Поверхность разбиения создана
+
 # Э2: обрезка поверхности
 tb-trim-surface-hint = Обрезать — отсечь лишнее по соседнему телу
 msg-trim = Щёлкните ту часть поверхности, которая остаётся
