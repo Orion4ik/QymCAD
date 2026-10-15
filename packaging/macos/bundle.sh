@@ -149,6 +149,18 @@ if [ -n "$left" ]; then
     exit 1
 fi
 
+# AD-HOC SIGNATURE. On Apple Silicon, modifying binaries and dylibs with `install_name_tool`
+# invalidates their Mach-O signature hashes. The kernel terminates an invalid Mach-O binary on start
+# with SIGKILL (Code Signature Invalid). An ad-hoc signature restores valid page hashes.
+echo ">>> applying ad-hoc code signature"
+for lib in "$APP"/Contents/Frameworks/*.dylib; do
+    if [ ! -L "$lib" ]; then
+        codesign --force -s - "$lib" >/dev/null 2>&1 || true
+    fi
+done
+codesign --force -s - "$APP/Contents/MacOS/qymcad" >/dev/null 2>&1 || true
+codesign --force -s - "$APP" >/dev/null 2>&1 || true
+
 # UNSIGNED, AND SAID SO IN BOTH LANGUAGES. Without an Apple signature the system marks the download as
 # quarantined and refuses to open it: "the app is damaged, move it to the Bin" - which it is not.
 #
