@@ -12,7 +12,18 @@ set -euo pipefail
 
 BIN=target/release/qymcad
 [ -x "$BIN" ] || { echo "!!! no $BIN - run cargo build --release first"; exit 1; }
-OCCT_ROOT=${OCCT_ROOT:?set OCCT_ROOT to the OCCT installation}
+if [ -z "${OCCT_ROOT:-}" ]; then
+    if [ -d "/opt/homebrew/opt/opencascade" ]; then
+        OCCT_ROOT="/opt/homebrew/opt/opencascade"
+    elif [ -d "/usr/local/opt/opencascade" ]; then
+        OCCT_ROOT="/usr/local/opt/opencascade"
+    elif command -v brew >/dev/null 2>&1 && brew --prefix opencascade >/dev/null 2>&1; then
+        OCCT_ROOT=$(brew --prefix opencascade)
+    else
+        echo "!!! set OCCT_ROOT to the OCCT installation" >&2
+        exit 1
+    fi
+fi
 
 # THE PROCESSOR, in the archive name and in the notes. Two packages go up side by side, and a person
 # holding an Intel mac must be able to tell theirs from the file name alone. CI names it (MACOS_ARCH);
